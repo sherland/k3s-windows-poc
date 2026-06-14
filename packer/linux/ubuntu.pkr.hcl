@@ -112,28 +112,28 @@ source "hyperv-iso" "ubuntu" {
 
 # ---------------------------------------------------------------------------
 build {
-  name    = "ubuntu-k3s"
+  name    = "ubuntu-k3s-base"
   sources = ["source.hyperv-iso.ubuntu"]
 
-  # --- 1: Base packages ---
+  # --- 1: Base packages, kernel modules, sysctl ---
   provisioner "shell" {
     script           = "scripts/01-base.sh"
     execute_command  = "echo '${var.admin_pass}' | sudo -S bash {{.Path}}"
     expect_disconnect = true
   }
 
-  # --- 2: k3s server ---
+  # --- 2: Install k3s binary only (no server/agent config, no systemd unit) ---
   provisioner "shell" {
-    script           = "scripts/02-k3s-server.sh"
+    script           = "scripts/02-install-k3s-binary.sh"
     execute_command  = "echo '${var.admin_pass}' | sudo -S bash {{.Path}}"
     environment_vars = [
       "K3S_VERSION=${var.k3s_version}"
     ]
   }
 
-  # --- 3: Export kubeconfig ---
+  # --- 3: cloud-init clean — wipe state so differencing clones get a fresh instance ---
   provisioner "shell" {
-    script           = "scripts/03-export-kubeconfig.sh"
+    script           = "scripts/03-cloud-init-clean.sh"
     execute_command  = "echo '${var.admin_pass}' | sudo -S bash {{.Path}}"
   }
 }

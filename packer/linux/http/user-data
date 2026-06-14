@@ -15,7 +15,7 @@ autoinstall:
   drivers:
     install: false
   identity:
-    hostname: k8s-linux-master
+    hostname: k8s-linux-base
     # password is set via the 'users' section below; this field is required but overridden
     password: ''
     realname: k8sadmin
@@ -36,7 +36,7 @@ autoinstall:
   ssh:
     allow-pw: true
     authorized-keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBK1b4ziRnLY9YK8VRQpt7o+fJxQ74CFZL0cQLTFPXxY packer-linux-build
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOSjajI26Zjug4Z414iR4rcUPddzh26FboksxcUn9E6Y packer-linux-build
     install-server: true
   storage:
     layout:
@@ -55,7 +55,7 @@ autoinstall:
         sudo: ALL=(ALL) NOPASSWD:ALL
         # SSH public key injected by Build-LinuxVM.ps1 from the ephemeral keypair
         ssh_authorized_keys:
-          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBK1b4ziRnLY9YK8VRQpt7o+fJxQ74CFZL0cQLTFPXxY packer-linux-build
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOSjajI26Zjug4Z414iR4rcUPddzh26FboksxcUn9E6Y packer-linux-build
   late-commands:
     # Install Hyper-V cloud tools so hv_kvp_daemon runs at boot.
     # This daemon is required for Packer to discover the VM's IP address via the Hyper-V KVP channel.

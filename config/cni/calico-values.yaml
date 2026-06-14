@@ -1,0 +1,35 @@
+# =============================================================================
+# Calico Tigera-Operator Helm values for k3s on Hyper-V (Linux CP + Linux workers)
+# Used by Apply-CNI.ps1 when CNIPlugin = 'calico'.
+#
+# NOTE: k3s must be started with --flannel-backend=none --disable-network-policy
+#       so that Calico owns all networking (no conflict with embedded flannel).
+#       Calico only supports Linux nodes (use flannel if Windows workers are needed).
+#
+# Installed via: helm install calico projectcalico/tigera-operator
+# Pods appear in: calico-system (calico-node, calico-kube-controllers)
+#                 tigera-operator (tigera-operator)
+# =============================================================================
+
+installation:
+  # Use Calico CNI (not host-local or other plugins)
+  cni:
+    type: Calico
+
+  calicoNetwork:
+    # Match k3s pod CIDR from config/variables.ps1 ($script:ClusterCidr = '10.42.0.0/16')
+    ipPools:
+      - cidr: 10.42.0.0/16
+        # VXLAN works across Hyper-V VMs without BGP routing setup
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+
+    # Disable BGP — not needed for VXLAN encapsulation on flat Hyper-V L2
+    bgp: Disabled
+
+  # Single-replica operator is fine for a small dev cluster
+  typhaDeployment: {}
+
+# Disable Calico's built-in network policy engine (k3s handles this)
+# This is optional — leaving enabled is also fine for dev clusters

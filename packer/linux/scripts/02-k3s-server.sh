@@ -13,17 +13,18 @@ INSTALL_TIMEOUT=300   # seconds
 
 echo "==> 02-k3s-server: Installing k3s ${K3S_VERSION}"
 
-# k3s install script.
-# --flannel-backend=host-gw: L2 routing (no VXLAN) — required for Windows workers on the
-#   same L2 subnet (Hyper-V external vSwitch). Each node's pod CIDR is routed directly
-#   via the node's IP using OS routing table entries that flanneld programs.
+# Determine flannel backend from the FLANNEL_BACKEND env var (set by Bootstrap-ControlPlane.ps1).
+# host-gw (default): L2 routing, no VXLAN — required for Windows workers on the same L2 subnet.
+# none: disable k3s embedded flannel — used when an external CNI (Cilium) manages networking.
+if [ "${FLANNEL_BACKEND:-host-gw}" = "none" ]; then
+    _FLANNEL_FLAGS="--flannel-backend=none --disable-network-policy"
+else
+    _FLANNEL_FLAGS="--flannel-backend=host-gw"
+fi
+
 curl -sfL https://get.k3s.io | \
     INSTALL_K3S_VERSION="${K3S_VERSION}" \
-    INSTALL_K3S_EXEC="server \
-        --disable traefik \
-        --flannel-backend=host-gw \
-        --node-label kubernetes.io/os=linux \
-        --write-kubeconfig-mode 0644" \
+    INSTALL_K3S_EXEC="server --disable traefik ${_FLANNEL_FLAGS} --node-label kubernetes.io/os=linux --write-kubeconfig-mode 0644" \
     sh -
 
 echo "==> 02-k3s-server: Waiting for k3s to become ready (timeout ${INSTALL_TIMEOUT}s)..."

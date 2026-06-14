@@ -1,14 +1,15 @@
-# Hyper-V Kubernetes Cluster (k3s: Linux master + Windows worker)
+# Hyper-V k3s Cluster — Multi-Node, Multi-CNI Edition
 
-Automates building a minimal k3s cluster on a Windows 11 host using Hyper-V.  
-Two VMs are created via Packer and joined into a single cluster:
+Automates building a configurable k3s cluster on a single Windows 11 host using Hyper-V differencing disks. Supports multiple topology scenarios with different CNI plugins:
 
-| VM | OS | Role | CPU | RAM |
-|----|----|------|-----|-----|
-| `k8s-linux-master` | Ubuntu 24.04 LTS | k3s server (control plane + Linux node) | 2 | 4 GB |
-| `k8s-windows-worker` | Windows Server 2025 Core | k3s agent (Windows worker node) | 4 | 7 GB |
+| Scenario | Script | CNI | Nodes | Verified |
+|----------|--------|-----|-------|---------|
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 1 Linux + 1 Windows (WS2022) | 18/18 PASS |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel | CP + 1 Linux | 14/14 PASS |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.4 | CP + 1 Linux | 13/13 PASS |
+| D | `Run-ScenarioD.ps1` | Calico v3.29.3 | CP + 1 Linux | 13/13 PASS |
 
-Both VMs attach to an external Hyper-V vSwitch and receive IPs from your router's DHCP.
+Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
 ---
 
@@ -16,126 +17,135 @@ Both VMs attach to an external Hyper-V vSwitch and receive IPs from your router'
 
 | Requirement | Details |
 |-------------|---------|
-| Host OS | Windows 11 or Windows Server 2022/2025 |
-| CPU | Nested virtualisation capable (Intel VT-x / AMD SVM) |
-| RAM | ≥ 16 GB (32 GB recommended) |
-| Free disk | ≥ 60 GB (each VM is ~60 GB, plus ISO + Packer cache) |
-| Network | Internet access for ISO download, apt packages, k3s binaries |
+| Host OS | Windows 11 (Hyper-V capable) |
+| CPU | Intel VT-x / AMD SVM with nested virtualisation |
+| RAM | ≥ 16 GB (32 GB recommended for Windows worker) |
+| Free disk | ≥ 80 GB (Linux base ~8 GB, Windows base ~25 GB, nodes ~5 GB each) |
+| Network | Internet access for ISO/binary downloads |
 | winget | Shipped with Windows 11 App Installer |
 
-Phase 0 of the build script automatically installs all remaining software (Hyper-V, Packer, kubectl, OpenSSH).
+Phase 0 automatically installs all remaining tooling (Hyper-V, Packer, kubectl, OpenSSH, Windows ADK).
 
 ---
 
-## Quick Start
+## Quick Start — Run a Scenario
 
-### 1. Configure credentials and sizing
-
-Edit [`config/variables.ps1`](config/variables.ps1) **before the first run**:
+All scenario scripts handle teardown, config patching, full build, and verification in one command. Run from an **elevated** PowerShell shell:
 
 ```powershell
-# Change default passwords
-$script:LinuxAdminUser  = 'k8sadmin'
-$script:LinuxAdminPass  = 'ChangeMe123!'
-$script:WinAdminUser    = 'Administrator'
-$script:WinAdminPass    = 'ChangeMe123!'
+# Scenario A: Flannel + CP + 1 Linux worker + 1 Windows worker (WS2022)
+.\Run-ScenarioA.ps1
+
+# Scenario B: Multus + CP + 1 Linux worker, no Windows
+.\Run-ScenarioB.ps1
+
+# Scenario C: Cilium + CP + 1 Linux worker, no Windows
+.\Run-ScenarioC.ps1
+
+# Scenario D: Calico + CP + 1 Linux worker, no Windows
+.\Run-ScenarioD.ps1
 ```
 
-> ⚠️ The default credentials (`k8sadmin` / `ChangeMe123!`) are only suitable for local development.
-
-### 2. (Optional) Verify your system
+Add `-DeleteGoldenImages` to force a full Packer rebuild of base VHDXs (needed when changing k3s version, base OS packages, etc.):
 
 ```powershell
-.\check-system.ps1
+.\Run-ScenarioA.ps1 -DeleteGoldenImages
 ```
 
-Checks admin rights, disk space, Hyper-V, and required tools.
-
-### 3. Build the cluster
+Add `-SkipCleanup` to skip teardown (re-run a scenario without destroying an existing cluster):
 
 ```powershell
-# Run as Administrator (wrapper handles elevation automatically)
-.\run-elevated.ps1
+.\Run-ScenarioC.ps1 -SkipCleanup
 ```
 
-Or, if you are already in an elevated shell:
+> ⚠️ The default credentials (`k8sadmin` / `ChangeMe123!`) are only suitable for local development. Change them in [`config/variables.ps1`](config/variables.ps1) before use.
+
+---
+
+## Manual Cluster Build
+
+If you want fine-grained control, patch `config/variables.ps1` and drive the orchestrator directly:
+
+### 1. Configure topology
+
+Edit [`config/variables.ps1`](config/variables.ps1):
 
 ```powershell
+# CNI plugin: 'flannel' | 'multus' | 'cilium' | 'calico' | 'none'
+$script:CNIPlugin = 'flannel'
+
+# Windows workers (set Count=0 for Linux-only cluster)
+$script:WindowsNodeSpecs = @(
+    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }
+)
+
+# Linux worker count
+$script:LinuxWorkerCount = 1
+```
+
+### 2. Run all phases
+
+```powershell
+# From an elevated shell
 .\scripts\Main.ps1
 ```
 
-**Total build time**: 45–90 minutes on first run (most time is Windows ISO download and VM provisioning).
-
-Progress is logged to `output/run.log` (when using `run-elevated.ps1`).
-
-### 4. Access the cluster
+### 3. Access the cluster
 
 ```powershell
 $env:KUBECONFIG = "$PWD\output\kubeconfig.yaml"
 kubectl get nodes -o wide
 ```
 
-Expected output: two nodes (`k8s-linux-master` + `k8s-windows-worker`), both `Ready`.
+---
+
+## CNI Plugin Reference
+
+| CNI | Value | Notes |
+|-----|-------|-------|
+| Flannel | `'flannel'` | Default. Required for Windows workers. k3s embedded, host-gw mode. |
+| Multus | `'multus'` | Meta-CNI on top of Flannel. Linux-only. Adds NetworkAttachmentDefinition CRD. |
+| Cilium | `'cilium'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm. |
+| Calico | `'calico'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm (tigera-operator). |
+
+**Phase ordering note:** For Cilium and Calico, the CNI must be installed *before* workers join (nodes stay `NotReady` without a CNI). `Main.ps1` handles this automatically.
 
 ---
 
-## Recreating the Cluster
-
-### Resume after a failure
-
-Each phase writes a sentinel file to `output/sentinels/`. Completed phases are skipped automatically on re-run.
+## Recreating / Resuming
 
 ```powershell
-# Resume from where it stopped
+# Resume from where it stopped (sentinels skip completed phases)
 .\scripts\Main.ps1
 
-# Explicitly resume from phase 4
-.\scripts\Main.ps1 -StartFromPhase 4
-```
+# Resume from a specific phase
+.\scripts\Main.ps1 -StartFromPhase 6
 
-### Force specific phases to re-run
+# Force specific phases to re-run
+.\scripts\Main.ps1 -ForcePhase 7,8
 
-```powershell
-# Re-run only phases 2 and 4 (Linux build + Windows build)
-.\scripts\Main.ps1 -ForcePhase 2,4
-```
+# Re-join a specific node
+.\scripts\Main.ps1 -ForceNode k8s-win-01
 
-### Full rebuild from scratch
-
-1. Delete the cluster (see below).
-2. Run the build again from the top.
-
-```powershell
-.\scripts\Remove-Cluster.ps1 -All
-.\run-elevated.ps1
+# Skip Windows nodes at runtime
+.\scripts\Main.ps1 -SkipWindowsNodes
 ```
 
 ---
 
 ## Deleting the Cluster
 
-`scripts/Remove-Cluster.ps1` tears down resources in a granular way.
-
 ```powershell
-# Remove everything (VMs + disks, vSwitch, output files, cached downloads)
-.\scripts\Remove-Cluster.ps1 -All
+# Remove VMs + node VHDXs + output files (keep base images and ISOs)
+.\scripts\Remove-Cluster.ps1 -VMs -OutputFiles -Force
 
-# Remove only VMs and their virtual disks
-.\scripts\Remove-Cluster.ps1 -VMs
+# Remove everything including base VHDXs and cached ISOs
+.\scripts\Remove-Cluster.ps1 -All -Force
 
-# Remove only the Hyper-V vSwitch
-.\scripts\Remove-Cluster.ps1 -Network
+# Keep base images (faster next run — skip Packer rebuild)
+.\scripts\Remove-Cluster.ps1 -VMs -OutputFiles -KeepBaseImages -Force
 
-# Remove only generated output files (kubeconfig, SSH keys, sentinel files)
-.\scripts\Remove-Cluster.ps1 -OutputFiles
-
-# Remove only cached downloads (ISO, Packer cache)
-.\scripts\Remove-Cluster.ps1 -Downloads
-
-# Combine flags
-.\scripts\Remove-Cluster.ps1 -VMs -Network -OutputFiles
-
-# Dry-run (shows what would be deleted, makes no changes)
+# Dry-run (shows what would be deleted, no changes)
 .\scripts\Remove-Cluster.ps1 -All -WhatIf
 ```
 
@@ -143,41 +153,21 @@ Each phase writes a sentinel file to `output/sentinels/`. Completed phases are s
 
 ## Phase Reference
 
-| Phase | Name | What Happens | Typical Duration |
-|-------|------|-------------|-----------------|
-| 0 | Host Prerequisites | Install Hyper-V, Packer, kubectl, OpenSSH; may auto-reboot | 5–15 min |
-| 1 | Hyper-V vSwitch | Create external vSwitch bound to primary NIC | < 1 min |
-| 2 | Build Linux VM | Packer builds Ubuntu 24.04, installs k3s server | 8–12 min |
-| 3 | Download Windows ISO | Download ~5 GB WS 2025 Core eval ISO from Microsoft | 5–20 min |
-| 4 | Build Windows VM | Packer builds WS 2025, installs containerd + k3s agent | 15–25 min |
-| 5 | Export kubeconfig | Copy k3s.yaml from Linux VM, patch server IP | < 1 min |
-| 6 | Join Windows node | Wait for Windows node to appear in `kubectl get nodes` | 2–5 min |
+| Phase | Script | What Happens | Typical Duration |
+|-------|--------|-------------|-----------------|
+| 0 | `Install-Prerequisites.ps1` | Hyper-V, Packer, kubectl, OpenSSH, Windows ADK | < 5 min |
+| 1 | `New-HyperVSwitch.ps1` | Create external vSwitch | < 1 min |
+| BASE-L | `Build-LinuxBase.ps1` | Packer builds Ubuntu 24.04 + k3s binary | 7–10 min |
+| BASE-W | `Build-WindowsBase.ps1` | Packer builds WS2022 + containerd + kubelet | 15–25 min |
+| 4 | `New-LinuxNodes.ps1` | Differencing disks + cloud-init seed ISOs | < 1 min |
+| 5 | `New-WindowsNodes.ps1` | Differencing disks for Windows nodes | < 1 min |
+| 6 | `Bootstrap-ControlPlane.ps1` | k3s server + RBAC + credentials export | 1–3 min |
+| 7 | `Join-Nodes.ps1` | Linux workers (SSH) + Windows workers (VMBus) | 1–5 min |
+| 8 | `Apply-CNI.ps1` | Apply CNI plugin (Multus/Cilium/Calico; no-op for Flannel) | 1–5 min |
+| 9 | `Export-KubeConfig.ps1` | Write `output/kubeconfig.yaml` + `cluster-info.txt` | < 1 min |
+| 10 | `Verify-Cluster.ps1` | Cross-node ping, DNS, ClusterIP, CNI health | 1–3 min |
 
-All phases are **idempotent** — safe to re-run; already-completed phases are skipped.
-
----
-
-## Advanced Usage
-
-### Health check (no changes)
-
-```powershell
-.\scripts\Main.ps1 -HealthCheckOnly
-```
-
-### Force re-run all phases (full rebuild without deleting VMs)
-
-```powershell
-.\scripts\Main.ps1 -ForcePhase 0,1,2,3,4,5,6
-```
-
-### Override host NIC (if auto-detection picks the wrong adapter)
-
-In `config/variables.ps1`:
-
-```powershell
-$script:HostNicName = 'Ethernet'   # exact name from Get-NetAdapter
-```
+All phases are **idempotent** — sentinel files in `output/sentinels/` skip already-completed work.
 
 ---
 
@@ -185,11 +175,10 @@ $script:HostNicName = 'Ethernet'   # exact name from Get-NetAdapter
 
 | Setting | Value |
 |---------|-------|
-| Hyper-V vSwitch | `k8s-external` (external, bridges to host NIC) |
+| Hyper-V vSwitch | `k8s-external` (external, bridges to host NIC via DHCP) |
 | Pod CIDR | `10.42.0.0/16` |
 | Service CIDR | `10.43.0.0/16` |
-| CoreDNS IP | `10.43.0.10` |
-| CNI | Flannel `host-gw` (L2, no VXLAN overhead) |
+| Flannel backend | `host-gw` (L2, no VXLAN) |
 | kubeconfig | `output/kubeconfig.yaml` |
 | Cluster info | `output/cluster-info.txt` |
 
@@ -199,24 +188,44 @@ $script:HostNicName = 'Ethernet'   # exact name from Get-NetAdapter
 
 ```
 .
+├── Run-ScenarioA.ps1          # End-to-end: Flannel + CP + Linux + Windows worker
+├── Run-ScenarioB.ps1          # End-to-end: Multus + CP + Linux worker
+├── Run-ScenarioC.ps1          # End-to-end: Cilium + CP + Linux worker
+├── Run-ScenarioD.ps1          # End-to-end: Calico + CP + Linux worker
 ├── config/
-│   └── variables.ps1          # Central config: credentials, VM sizing, versions
+│   ├── variables.ps1          # Single source of truth: versions, topology, credentials
+│   └── cni/
+│       ├── multus-daemonset.yaml   # Multus v4.3.0 DaemonSet manifest
+│       ├── cilium-values.yaml      # Cilium v1.19.4 Helm values
+│       └── calico-values.yaml      # Calico v3.29.3 tigera-operator Helm values
 ├── docs/
-│   └── plan-k8sHyperVCluster.prompt.md   # Architecture and design decisions
-├── output/                    # Generated at runtime (gitignored sensitive files)
+│   └── architecture.md        # Component layout, networking, build sequence
+├── output/                    # Generated at runtime
 │   ├── kubeconfig.yaml
 │   ├── cluster-info.txt
+│   ├── node-token.txt
+│   ├── admin-kubeconfig.yaml
+│   ├── flannel-kubeconfig.yaml
+│   ├── seed-isos/             # Per-node cloud-init ISOs
 │   └── sentinels/             # Phase completion markers
 ├── packer/
-│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 24.04 Packer template
-│   └── windows/winserver.pkr.hcl  # Windows Server 2025 Packer template
+│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 24.04 + k3s binary base image
+│   └── windows/winserver.pkr.hcl  # WS2022/WS2025 + containerd + kubelet base image
 ├── scripts/
-│   ├── Main.ps1               # Primary orchestrator
-│   ├── Remove-Cluster.ps1     # Cluster teardown
-│   ├── Helpers.ps1            # Shared utilities (logging, SSH, retry, phases)
-│   └── ...                    # Per-phase scripts
+│   ├── Main.ps1               # 10-phase orchestrator
+│   ├── Remove-Cluster.ps1     # Granular teardown
+│   ├── Helpers.ps1            # Shared utilities
+│   ├── Bootstrap-ControlPlane.ps1
+│   ├── Join-Nodes.ps1
+│   ├── Apply-CNI.ps1
+│   ├── Verify-Cluster.ps1
+│   └── ...                    # Other per-phase scripts
+├── vhdx/
+│   ├── linux-base/            # Golden Ubuntu base VHDX (read-only)
+│   ├── win2022-base/          # Golden WS2022 base VHDX (read-only)
+│   └── nodes/                 # Per-node differencing disks
 ├── check-system.ps1           # Pre-flight system checks
-└── run-elevated.ps1           # Elevation wrapper (auto-elevates + logs)
+└── run-elevated.ps1           # Elevation wrapper + log tee
 ```
 
 ---
@@ -225,11 +234,13 @@ $script:HostNicName = 'Ethernet'   # exact name from Get-NetAdapter
 
 | Symptom | Fix |
 |---------|-----|
-| Phase 0 triggers a reboot | Normal — Hyper-V requires a reboot. Re-run after reboot. |
-| Phase 3 stalls (ISO download) | Check internet connectivity; the MS Eval Center can be slow. |
-| Windows VM fails to join | Re-run `.\scripts\Main.ps1 -StartFromPhase 5`; WinRM timeout may need extending in `config/variables.ps1`. |
-| `kubectl` can't connect | Verify `$env:KUBECONFIG` is set to `output/kubeconfig.yaml`; check VM IP with `output/linux-vm-ip.txt`. |
-| Wrong NIC selected for vSwitch | Set `$script:HostNicName` in `config/variables.ps1`. |
+| Phase 0 triggers a reboot | Normal — Hyper-V requires reboot. Re-run after reboot; sentinels preserve progress. |
+| Packer build fails (SSH timeout) | Usually a transient cloud-init timing issue; re-run with `-ForcePhase BASE-L`. |
+| Windows VM fails to join | Re-run `.\scripts\Main.ps1 -ForceNode k8s-win-01`; check `C:\k8s-firstboot-log.txt` inside the VM. |
+| Nodes stay `NotReady` (Cilium/Calico) | Phase ordering: CNI must deploy before workers join. This is handled automatically; re-run from phase 7 if disrupted. |
+| `kubectl` can't connect | Verify `$env:KUBECONFIG` points to `output/kubeconfig.yaml`; check `output/linux-vm-ip.txt`. |
+| Wrong NIC for vSwitch | Set `$script:HostNicName` in `config/variables.ps1`. |
+| SSH key mismatch after rebuild | Delete `output/linux-build-key*` and re-run — `Build-LinuxBase.ps1` regenerates and patches user-data automatically. |
+| containerd v2.x error | Must use v1.7.x — v2.x removed the CRI v1 API required by kubelet. Pin is in `config/variables.ps1`. |
 
-See [`docs/architecture.md`](docs/architecture.md) for component layout, networking internals, and the full build sequence.
-See [`docs/plan-k8sHyperVCluster.prompt.md`](docs/plan-k8sHyperVCluster.prompt.md) for architecture decisions and design rationale.
+See [`docs/architecture.md`](docs/architecture.md) for full component layout, networking internals, and build sequence.

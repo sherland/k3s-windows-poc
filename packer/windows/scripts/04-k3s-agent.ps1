@@ -177,12 +177,12 @@ if (-not (Test-Path $HostLocalPath)) {
 @"
 {
   "name": "cbr0",
-  "cniVersion": "0.3.1",
+  "cniVersion": "0.3.0",
   "plugins": [
     {
       "type": "flannel",
       "delegate": {
-        "type": "win-bridge",
+        "type": "sdnbridge",
         "dns": {
           "Nameservers": ["$ClusterDnsIp"],
           "Search":      ["svc.cluster.local", "cluster.local"]
@@ -338,10 +338,10 @@ $null = New-Item -ItemType Directory -Force -Path $CniConfDir
 @"
 {
   "name": "cbr0",
-  "cniVersion": "0.3.1",
+  "cniVersion": "0.3.0",
   "plugins": [
     {
-      "type": "win-bridge",
+      "type": "sdnbridge",
       "ipam": {
         "type": "host-local",
         "subnet": "$podCidr",

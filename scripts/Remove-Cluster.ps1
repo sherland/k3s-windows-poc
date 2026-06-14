@@ -29,16 +29,20 @@
 
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
-    [switch]$All,           # shorthand for -VMs -Network -OutputFiles -Downloads
-    [switch]$VMs,           # stop + delete Hyper-V VMs and their VHD/X files
-    [switch]$Network,       # remove the k8s-external Hyper-V vSwitch
-    [switch]$OutputFiles,   # remove generated output\ files and phase sentinels
-    [switch]$Downloads,     # remove cached ISOs and Packer HTTP cache
-    [switch]$Force          # skip confirmation prompts
+    [switch]$All,             # shorthand for -VMs -Network -OutputFiles -Downloads
+    [switch]$VMs,             # stop + delete Hyper-V VMs and their VHD/X files
+    [switch]$Network,         # remove the k8s-external Hyper-V vSwitch
+    [switch]$OutputFiles,     # remove generated output\ files and phase sentinels
+    [switch]$Downloads,       # remove cached ISOs and Packer HTTP cache
+    [switch]$KeepBaseImages,  # with -VMs/-OutputFiles: keep golden base VHDXs and their sentinels
+    [switch]$Force            # skip confirmation prompts
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# -Force suppresses ShouldProcess confirmations (ConfirmImpact = High blocks otherwise)
+if ($Force) { $ConfirmPreference = 'None' }
 
 . "$PSScriptRoot\Helpers.ps1"
 . "$PSScriptRoot\..\config\variables.ps1"
@@ -111,11 +115,12 @@ if (-not ($VMs -or $Network -or $OutputFiles -or $Downloads)) {
     Write-Host @'
 No cleanup target specified. Use one or more of:
 
-  -All           Remove everything
-  -VMs           Remove Hyper-V VMs and their VHD files
-  -Network       Remove the k8s-external Hyper-V vSwitch
-  -OutputFiles   Remove generated output files and phase sentinels
-  -Downloads     Remove cached ISOs and Packer HTTP cache
+  -All              Remove everything
+  -VMs              Remove Hyper-V VMs and their VHD files
+  -Network          Remove the k8s-external Hyper-V vSwitch
+  -OutputFiles      Remove generated output files and phase sentinels
+  -Downloads        Remove cached ISOs and Packer HTTP cache
+  -KeepBaseImages   With -VMs/-OutputFiles: keep golden base VHDXs and their sentinels
 
 Add -WhatIf to preview without making any changes.
 '@
@@ -127,9 +132,10 @@ Add -WhatIf to preview without making any changes.
 # ---------------------------------------------------------------------------
 if (-not $Force -and -not $WhatIfPreference) {
     $targets = @()
-    if ($VMs)         { $targets += "VMs ($($script:LinuxVMName), $($script:WindowsVMName)) + VHD files" }
-    if ($Network)     { $targets += "Hyper-V vSwitch '$($script:vSwitchName)'" }
-    if ($OutputFiles) { $targets += "output\ files and phase sentinels" }
+        $allLinux   = Get-AllLinuxNodeNames
+        $allWindows = Get-AllWindowsNodeNames
+        $allVMs = $allLinux + $allWindows
+        if ($VMs)         { $targets += "VMs ($($allVMs -join ', ')) + differencing VHD files" }
     if ($Downloads)   { $targets += "cached ISOs and Packer HTTP cache" }
 
     Write-Host ''
@@ -147,21 +153,82 @@ if (-not $Force -and -not $WhatIfPreference) {
 # VMs
 # ---------------------------------------------------------------------------
 if ($VMs) {
-    Write-PhaseHeader 'CLEAN' 'Remove Hyper-V VMs'
+    Write-PhaseHeader 'CLEAN' 'Remove Hyper-V VMs and base images'
 
-    Remove-VMAndDisks -VMName $script:LinuxVMName
-    Remove-VMAndDisks -VMName $script:WindowsVMName
+    # --- Upfront sweep: stop+remove ALL VMs that have any disk under our VHDX store ---
+    # This handles differencing-disk chains: a running child locks its parent VHDX even
+    # if the child's disk is in a different sub-directory (e.g. nodes\ vs win2022-base\).
+    Get-VM -ErrorAction SilentlyContinue | ForEach-Object {
+        $vmName = $_.Name
+        $inStore = Get-VMHardDiskDrive -VMName $vmName -ErrorAction SilentlyContinue |
+                   Where-Object { $_.Path -like "$($script:VHDXStoreDir)\*" }
+        if ($inStore) {
+            Write-Step "  Found VM '$vmName' with disk in VHDX store — removing..."
+            if ($PSCmdlet.ShouldProcess($vmName, 'Remove VM (VHDX store)')) {
+                if ($_.State -ne 'Off') {
+                    Stop-VM -Name $vmName -TurnOff -Force -ErrorAction SilentlyContinue
+                }
+                # Collect disk paths before removing VM
+                $diskPaths = @(Get-VMHardDiskDrive -VMName $vmName -ErrorAction SilentlyContinue |
+                               Select-Object -ExpandProperty Path)
+                Remove-VM -Name $vmName -Force -ErrorAction SilentlyContinue
+                foreach ($disk in $diskPaths) {
+                    if ($disk -and (Test-Path $disk)) {
+                        Remove-Item $disk -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                Write-Success "  VM '$vmName' removed."
+            }
+        }
+    }
 
-    # Remove the VHDX store directories (they may still hold orphaned files)
+    # Also remove any named base VMs that may not have disks in the store (edge case)
+    if (-not $KeepBaseImages) {
+        foreach ($baseName in @('k8s-linux-base', 'k8s-win2022-base', 'k8s-win2025-base')) {
+            $bv = Get-VM -Name $baseName -ErrorAction SilentlyContinue
+            if ($bv) { Remove-VMAndDisks -VMName $baseName }
+        }
+    }
+
+    # Remove all VHDX store subdirectories
+    $baseDirs = if ($KeepBaseImages) { @('nodes') } else { @('linux-base', 'win2022-base', 'win2025-base', 'nodes') }
+    foreach ($sub in $baseDirs) {
+        $dir = Join-Path $script:VHDXStoreDir $sub
+        if (-not (Test-Path $dir)) { continue }
+        Write-Step "  Removing VHDX dir: $dir"
+        if ($PSCmdlet.ShouldProcess($dir, 'Remove-Item')) {
+            Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+            if (Test-Path $dir) {
+                # Retry once after brief pause (VMMS may hold handle momentarily)
+                Start-Sleep -Seconds 3
+                Remove-Item $dir -Recurse -Force
+            }
+        }
+    }
+
+    # Also remove legacy single-VM dirs (backward compat)
+    # First, stop+remove any Hyper-V VMs still referencing VHDXs in these dirs
     foreach ($sub in @('linux', 'windows')) {
         $dir = Join-Path $script:VHDXStoreDir $sub
-        if (Test-Path $dir) {
-            $remaining = Get-ChildItem $dir -ErrorAction SilentlyContinue
-            if ($remaining) {
-                Write-Step "  Removing remaining VHDX files in $dir"
-                if ($PSCmdlet.ShouldProcess($dir, 'Remove VHDX files')) {
-                    Remove-Item (Join-Path $dir '*') -Recurse -Force
+        if (-not (Test-Path $dir)) { continue }
+        # Find VMs whose disks live under this dir
+        Get-VM -ErrorAction SilentlyContinue | ForEach-Object {
+            $vmName = $_.Name
+            $vmDisks = Get-VMHardDiskDrive -VMName $vmName -ErrorAction SilentlyContinue |
+                       Where-Object { $_.Path -like "$dir\*" }
+            if ($vmDisks) {
+                Write-Step "  Stopping+removing legacy VM '$vmName' (disk in $dir)..."
+                if ($PSCmdlet.ShouldProcess($vmName, 'Remove legacy VM')) {
+                    Stop-VM -Name $vmName -TurnOff -Force -ErrorAction SilentlyContinue
+                    Remove-VM -Name $vmName -Force -ErrorAction SilentlyContinue
                 }
+            }
+        }
+        $remaining = Get-ChildItem $dir -ErrorAction SilentlyContinue
+        if ($remaining) {
+            Write-Step "  Removing legacy VHDX dir: $dir"
+            if ($PSCmdlet.ShouldProcess($dir, 'Remove VHDX dir')) {
+                Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
     }
@@ -217,9 +284,18 @@ if ($OutputFiles) {
     # Phase sentinels
     $sentinelDir = Join-Path $script:OutputDir 'sentinels'
     if (Test-Path $sentinelDir) {
-        Write-Step "  Removing phase sentinels in $sentinelDir"
-        if ($PSCmdlet.ShouldProcess($sentinelDir, 'Remove sentinel files')) {
-            Remove-Item (Join-Path $sentinelDir '*') -Force -ErrorAction SilentlyContinue
+        if ($KeepBaseImages) {
+            # Remove all sentinels except base-image ones
+            $basesentinels = @('phase-linux-base.done','phase-win2022-base.done','phase-win2025-base.done')
+            Write-Step "  Removing phase sentinels (keeping base-image sentinels)"
+            Get-ChildItem $sentinelDir -Filter '*.done' | Where-Object { $_.Name -notin $basesentinels } | ForEach-Object {
+                if ($PSCmdlet.ShouldProcess($_.FullName, 'Remove-Item')) { Remove-Item $_.FullName -Force }
+            }
+        } else {
+            Write-Step "  Removing phase sentinels in $sentinelDir"
+            if ($PSCmdlet.ShouldProcess($sentinelDir, 'Remove sentinel files')) {
+                Remove-Item (Join-Path $sentinelDir '*') -Force -ErrorAction SilentlyContinue
+            }
         }
     }
 
@@ -245,27 +321,27 @@ if ($OutputFiles) {
 if ($Downloads) {
     Write-PhaseHeader 'CLEAN' 'Remove cached downloads'
 
-    # ISOs cached by Build-LinuxVM / Build-WindowsVM
+    # ISOs cached by base builds
     $isoGlobs = @(
-        (Join-Path $script:OutputDir '*.iso'),
-        (Join-Path $script:PackerLinuxDir 'http\*.iso'),
-        (Join-Path $script:PackerWindowsDir 'http\*.iso')
+        (Join-Path $script:PackerWindowsDir 'iso\WS2022-eval.iso'),
+        (Join-Path $script:PackerWindowsDir 'iso\WS2025-eval.iso')
     )
-    foreach ($glob in $isoGlobs) {
-        $files = Get-Item $glob -ErrorAction SilentlyContinue
-        foreach ($f in $files) {
-            Write-Step "  Removing ISO: $($f.FullName)"
-            if ($PSCmdlet.ShouldProcess($f.FullName, 'Remove-Item')) {
-                Remove-Item $f.FullName -Force
+    foreach ($isoPath in $isoGlobs) {
+        if (Test-Path $isoPath) {
+            Write-Step "  Removing ISO: $isoPath"
+            if ($PSCmdlet.ShouldProcess($isoPath, 'Remove-Item')) {
+                Remove-Item $isoPath -Force
             }
         }
     }
 
-    # Windows ISO — may be stored at a custom path from variables.ps1
-    if ($script:WindowsISOLocalPath -and (Test-Path $script:WindowsISOLocalPath)) {
-        Write-Step "  Removing Windows ISO: $($script:WindowsISOLocalPath)"
-        if ($PSCmdlet.ShouldProcess($script:WindowsISOLocalPath, 'Remove-Item')) {
-            Remove-Item $script:WindowsISOLocalPath -Force
+    # Custom local ISO paths from variables.ps1
+    foreach ($isoLocalPath in @($script:WindowsISOLocalPath2022, $script:WindowsISOLocalPath2025)) {
+        if ($isoLocalPath -and (Test-Path $isoLocalPath)) {
+            Write-Step "  Removing local ISO: $isoLocalPath"
+            if ($PSCmdlet.ShouldProcess($isoLocalPath, 'Remove-Item')) {
+                Remove-Item $isoLocalPath -Force
+            }
         }
     }
 

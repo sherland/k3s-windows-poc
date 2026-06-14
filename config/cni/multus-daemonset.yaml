@@ -1,0 +1,204 @@
+# =============================================================================
+# Multus CNI DaemonSet — adapted for k3s
+# Upstream: https://github.com/k8snetworkplumbingwg/multus-cni v4.3.0
+#
+# Key k3s adaptations:
+#   cni-cfg hostPath → /var/lib/rancher/k3s/agent/etc/cni/net.d
+#     (k3s writes flannel conflist here; containerd is configured to read here)
+#   --multus-kubeconfig-file-host updated to match the host cni dir
+#
+# Multus acts as a meta-plugin: it delegates to the first file in the cni-cfg
+# dir (flannel's 10-flannel.conflist) for the primary pod interface, enabling
+# additional NetworkAttachmentDefinitions for secondary interfaces.
+# =============================================================================
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: network-attachment-definitions.k8s.cni.cncf.io
+  annotations:
+    "api-approved.kubernetes.io": "https://github.com/kubernetes/kubernetes/pull/78458"
+spec:
+  group: k8s.cni.cncf.io
+  scope: Namespaced
+  names:
+    plural: network-attachment-definitions
+    singular: network-attachment-definition
+    kind: NetworkAttachmentDefinition
+    shortNames:
+    - net-attach-def
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          description: >
+            NetworkAttachmentDefinition expresses intent for attaching pods to
+            one or more logical or physical networks.
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              properties:
+                config:
+                  description: CNI JSON configuration for the network.
+                  type: string
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: multus
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: multus
+rules:
+  - apiGroups: ["k8s.cni.cncf.io"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/status"]
+    verbs: ["get", "update"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: multus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: multus
+subjects:
+  - kind: ServiceAccount
+    name: multus
+    namespace: kube-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: kube-multus-ds
+  namespace: kube-system
+  labels:
+    tier: node
+    app: multus
+    name: multus
+spec:
+  selector:
+    matchLabels:
+      name: multus
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        tier: node
+        app: multus
+        name: multus
+    spec:
+      hostNetwork: true
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+      serviceAccountName: multus
+      initContainers:
+        - name: install-multus-binary
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick
+          command:
+            - cp
+            - /usr/src/multus-cni/bin/multus-shim
+            - /host/opt/cni/bin/multus-shim
+          resources:
+            requests:
+              cpu: "10m"
+              memory: "15Mi"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: cni-bin-dir
+              mountPath: /host/opt/cni/bin
+              mountPropagation: Bidirectional
+        - name: generate-multus-config
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /host/etc/cni/net.d/multus.d
+              cat > /host/etc/cni/net.d/multus.d/daemon-config.json << 'EOF'
+              {
+                "cniVersion": "0.3.1",
+                "logLevel": "verbose",
+                "cniConfigDir": "/host/etc/cni/net.d",
+                "multusAutoconfigDir": "/host/etc/cni/net.d",
+                "multusKubeconfigFileHost": "/var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/multus.kubeconfig",
+                "namespaceIsolation": false,
+                "globalNamespaces": "default,kube-system,kube-public"
+              }
+              EOF
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: cni-cfg
+              mountPath: /host/etc/cni/net.d
+              mountPropagation: Bidirectional
+      containers:
+        - name: kube-multus
+          image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick
+          command:
+            - /usr/src/multus-cni/bin/multus-daemon
+          args:
+            - "-config=/host/etc/cni/net.d/multus.d/daemon-config.json"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "50Mi"
+            limits:
+              cpu: "100m"
+              memory: "50Mi"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: cni-cfg
+              mountPath: /host/etc/cni/net.d
+              mountPropagation: Bidirectional
+            - name: host-run
+              mountPath: /host/run
+              mountPropagation: Bidirectional
+            - name: host-var-lib-cni
+              mountPath: /var/lib/cni
+              mountPropagation: Bidirectional
+            - name: host-run-k8s-cni
+              mountPath: /run/k8s.cni.cncf.io
+              mountPropagation: Bidirectional
+          terminationMessagePolicy: FallbackToLogsOnError
+      volumes:
+        - name: cni-bin-dir
+          hostPath:
+            path: /opt/cni/bin
+        # k3s CNI conf dir (flannel writes 10-flannel.conflist here)
+        - name: cni-cfg
+          hostPath:
+            path: /var/lib/rancher/k3s/agent/etc/cni/net.d
+        - name: host-run
+          hostPath:
+            path: /run
+        - name: host-var-lib-cni
+          hostPath:
+            path: /var/lib/cni
+        - name: host-run-k8s-cni
+          hostPath:
+            path: /run/k8s.cni.cncf.io
+      nodeSelector:
+        kubernetes.io/os: linux

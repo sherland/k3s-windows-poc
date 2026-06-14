@@ -147,6 +147,29 @@ function Invoke-Phase0 {
     # --- OpenSSH client ---
     Invoke-Step 'Install OpenSSH client' { Install-OpenSSHClient }
 
+    # --- Windows ADK (for oscdimg.exe — needed to create Linux cloud-init seed ISOs) ---
+    Invoke-Step 'Ensure Windows ADK (oscdimg.exe)' {
+        $oscdimgPaths = @(
+            "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe",
+            "${env:ProgramFiles(x86)}\Windows Kits\11\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe"
+        )
+        $found = $oscdimgPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if ($found) {
+            Write-Success "oscdimg.exe found: $found"
+        } else {
+            Write-Step 'Installing Windows ADK (Deployment Tools) via winget...'
+            winget install --exact --id Microsoft.WindowsADK `
+                --accept-package-agreements --accept-source-agreements --silent 2>&1 | Out-Null
+            $found = $oscdimgPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $found) {
+                Write-Warn "oscdimg.exe not found after ADK install. Cloud-init seed ISO creation will fail."
+                Write-Warn "Install manually: https://go.microsoft.com/fwlink/?linkid=2196127"
+            } else {
+                Write-Success "oscdimg.exe installed: $found"
+            }
+        }
+    }
+
     Assert-Phase0Complete
     Set-PhaseComplete 'phase0'
     Write-PhaseDone '0'

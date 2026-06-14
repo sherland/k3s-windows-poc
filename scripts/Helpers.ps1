@@ -126,14 +126,17 @@ function Wait-Until {
         [scriptblock]$Condition,
         [int]$TimeoutSec = 300,
         [int]$PollSec    = 10,
-        [string]$Description = 'condition'
+        [string]$Description = 'condition',
+        # When set, return $false on timeout instead of throwing
+        [switch]$NoThrow
     )
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
-        if (& $Condition) { return }
+        if (& $Condition) { return $true }
         Write-Step "Waiting for $Description..."
         Start-Sleep -Seconds $PollSec
     }
+    if ($NoThrow) { return $false }
     throw "Timeout after ${TimeoutSec}s waiting for: $Description"
 }
 
@@ -271,7 +274,7 @@ function Get-VMIPAddress {
         [string]$VMName,
         [int]$TimeoutSec = 120
     )
-    Wait-Until -TimeoutSec $TimeoutSec -PollSec 5 -Description "$VMName IP assignment" -Condition {
+    $null = Wait-Until -TimeoutSec $TimeoutSec -PollSec 5 -Description "$VMName IP assignment" -Condition {
         $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
         if (-not $vm) { return $false }
         $ip = ($vm.NetworkAdapters | ForEach-Object { $_.IPAddresses } |
@@ -349,5 +352,238 @@ function Initialize-OutputDir {
     if (-not (Test-Path $Dir)) {
         $null = New-Item -ItemType Directory -Force -Path $Dir
         Write-Step "Created output directory: $Dir"
+    }
+}
+
+# =============================================================================
+# Multi-node topology helpers
+# =============================================================================
+
+# Returns all Linux node VM names: CP first, then workers
+function Get-AllLinuxNodeNames {
+    $names = @($script:ControlPlaneVMName)
+    for ($i = 1; $i -le $script:LinuxWorkerCount; $i++) {
+        $names += '{0}-{1:D2}' -f $script:LinuxWorkerPrefix, $i
+    }
+    return $names
+}
+
+# Returns all Windows node VM names in order (numbered globally across specs)
+function Get-AllWindowsNodeNames {
+    $names  = @()
+    $global = 1
+    foreach ($spec in $script:WindowsNodeSpecs) {
+        for ($i = 0; $i -lt $spec.Count; $i++) {
+            $names += '{0}-{1:D2}' -f $script:WindowsWorkerPrefix, $global
+            $global++
+        }
+    }
+    return $names
+}
+
+# Returns hashtable: VMName → @{ OSVersion; CPU; RAM }
+function Get-WindowsNodeOSMap {
+    $map    = @{}
+    $global = 1
+    foreach ($spec in $script:WindowsNodeSpecs) {
+        for ($i = 0; $i -lt $spec.Count; $i++) {
+            $name        = '{0}-{1:D2}' -f $script:WindowsWorkerPrefix, $global
+            $map[$name]  = @{ OSVersion = $spec.OSVersion; CPU = $spec.CPU; RAM = $spec.RAM }
+            $global++
+        }
+    }
+    return $map
+}
+
+# Returns the set of distinct OS versions needed (e.g. @('2022','2025') or @('2025'))
+function Get-RequiredWindowsVersions {
+    return @($script:WindowsNodeSpecs | ForEach-Object { $_.OSVersion } | Sort-Object -Unique)
+}
+
+# =============================================================================
+# VHDX path helpers
+# =============================================================================
+
+# Return the path to the golden (parent) VHDX for a given OS type.
+# The .vhdx is searched recursively under the OS-specific subdirectory.
+function Get-BaseVhdxPath {
+    param([string]$OS)   # 'linux' | 'win2022' | 'win2025'
+    $subDir = switch ($OS) {
+        'linux'   { 'linux-base' }
+        'win2022' { 'win2022-base' }
+        'win2025' { 'win2025-base' }
+        default   { throw "Get-BaseVhdxPath: unknown OS '$OS'" }
+    }
+    $dir  = Join-Path $script:VHDXStoreDir $subDir
+    $vhdx = Get-ChildItem -Path $dir -Recurse -Filter '*.vhdx' -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+    if (-not $vhdx) {
+        throw "No .vhdx found under '$dir'. Run the base build first (Build-LinuxBase.ps1 or Build-WindowsBase.ps1)."
+    }
+    return $vhdx.FullName
+}
+
+# Return the canonical path for a node's differencing VHDX
+function Get-NodeVhdxPath {
+    param([string]$NodeName)
+    return Join-Path $script:VHDXStoreDir "nodes\${NodeName}.vhdx"
+}
+
+# =============================================================================
+# Differencing disk + VM creation
+# =============================================================================
+
+function New-DifferencingNode {
+    <#
+    .SYNOPSIS
+        Create a Hyper-V VM backed by a differencing disk from a golden parent VHDX.
+    .PARAMETER Generation
+        2 = Linux (SCSI, UEFI, no secure boot). 1 = Windows (IDE, BIOS).
+    #>
+    param(
+        [string]$VMName,
+        [string]$ParentVhdxPath,
+        [string]$ChildVhdxPath,
+        [int]$CPU,
+        [int]$MemoryMB,
+        [string]$SwitchName,
+        [int]$Generation = 2,
+        [switch]$EnableNestedVirt
+    )
+
+    # Create differencing disk
+    $childDir = Split-Path $ChildVhdxPath
+    $null = New-Item -ItemType Directory -Force -Path $childDir
+
+    if (-not (Test-Path $ChildVhdxPath)) {
+        Write-Step "Creating differencing disk for '$VMName'..."
+        New-VHD -Path $ChildVhdxPath -ParentPath $ParentVhdxPath -Differencing | Out-Null
+        Write-Success "Differencing disk: $ChildVhdxPath"
+    } else {
+        Write-Step "Differencing disk already exists — reusing: $(Split-Path $ChildVhdxPath -Leaf)"
+    }
+
+    # Create the VM if it doesn't exist
+    $vm = Get-VM -Name $VMName -ErrorAction SilentlyContinue
+    if (-not $vm) {
+        Write-Step "Creating VM '$VMName' (Gen $Generation, ${MemoryMB} MB, $CPU vCPU)..."
+        $null = New-VM -Name $VMName -Generation $Generation `
+            -MemoryStartupBytes ($MemoryMB * 1MB) -SwitchName $SwitchName -NoVHD
+
+        Set-VMProcessor -VMName $VMName -Count $CPU
+        Set-VM         -VMName $VMName -DynamicMemory:$false -CheckpointType Disabled
+
+        if ($Generation -eq 2) {
+            Add-VMHardDiskDrive -VMName $VMName -Path $ChildVhdxPath -ControllerType SCSI
+            Set-VMFirmware      -VMName $VMName -EnableSecureBoot Off
+            # Set boot order: hard disk first, then network
+            $hd  = Get-VMHardDiskDrive -VMName $VMName
+            $net = Get-VMNetworkAdapter -VMName $VMName
+            Set-VMFirmware -VMName $VMName -BootOrder @($hd, $net)
+        } else {
+            # Gen 1: IDE controller 0, position 0
+            Add-VMHardDiskDrive -VMName $VMName -Path $ChildVhdxPath `
+                -ControllerType IDE -ControllerNumber 0 -ControllerLocation 0
+        }
+
+        if ($EnableNestedVirt) {
+            Set-VMProcessor -VMName $VMName -ExposeVirtualizationExtensions $true
+            Write-Step "Nested virtualisation enabled on '$VMName'"
+        }
+
+        Write-Success "VM '$VMName' created"
+    } else {
+        Write-Step "VM '$VMName' already registered — skipping creation"
+    }
+}
+
+# =============================================================================
+# Cloud-init seed ISO (Linux NoCloud datasource)
+# =============================================================================
+
+function Find-Oscdimg {
+    # Prefer PATH
+    $cmd = Get-Command oscdimg -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+
+    # Common ADK install locations
+    $paths = @(
+        "${env:ProgramFiles(x86)}\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe",
+        "${env:ProgramFiles(x86)}\Windows Kits\11\Assessment and Deployment Kit\Deployment Tools\amd64\Oscdimg\oscdimg.exe"
+    )
+    foreach ($p in $paths) {
+        if (Test-Path $p) { return $p }
+    }
+    throw 'oscdimg.exe not found. Install Windows ADK: winget install --exact --id Microsoft.WindowsADK'
+}
+
+function New-SeedISO {
+    <#
+    .SYNOPSIS
+        Create a cloud-init NoCloud seed ISO with CIDATA volume label.
+    .PARAMETER UserDataContent
+        Full #cloud-config YAML content (the user-data file).
+    #>
+    param(
+        [string]$NodeName,
+        [string]$IsoPath,
+        [string]$UserDataContent,
+        [string]$InstanceId = [Guid]::NewGuid().ToString()
+    )
+
+    $oscdimg = Find-Oscdimg
+
+    $tmpDir = Join-Path $env:TEMP "cloud-init-$NodeName-$([Guid]::NewGuid().ToString('N').Substring(0,8))"
+    $null   = New-Item -ItemType Directory -Force -Path $tmpDir
+
+    try {
+        # meta-data: instance identity (required by NoCloud datasource)
+        Set-Content -Path (Join-Path $tmpDir 'meta-data') -Encoding UTF8 -NoNewline `
+            -Value "instance-id: $InstanceId`nlocal-hostname: $NodeName"
+
+        # user-data: cloud-config
+        Set-Content -Path (Join-Path $tmpDir 'user-data') -Encoding UTF8 -NoNewline `
+            -Value $UserDataContent
+
+        $null = New-Item -ItemType Directory -Force -Path (Split-Path $IsoPath)
+        & $oscdimg -j1 -r -lcidata $tmpDir $IsoPath 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "oscdimg failed creating '$IsoPath' (exit $LASTEXITCODE)"
+        }
+        Write-Success "Seed ISO created: $IsoPath"
+    } finally {
+        Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# Attach a seed ISO as a Gen2 SCSI DVD drive and set boot order (HD first)
+function Add-SeedISOToDvd {
+    param([string]$VMName, [string]$IsoPath)
+    # Remove any existing DVD drives first
+    Get-VMDvdDrive -VMName $VMName -ErrorAction SilentlyContinue | Remove-VMDvdDrive
+    Add-VMDvdDrive -VMName $VMName -Path $IsoPath
+    # Re-assert boot order: HD, then DVD, then NIC
+    $hd  = Get-VMHardDiskDrive -VMName $VMName | Select-Object -First 1
+    $dvd = Get-VMDvdDrive      -VMName $VMName | Select-Object -First 1
+    $net = Get-VMNetworkAdapter -VMName $VMName | Select-Object -First 1
+    Set-VMFirmware -VMName $VMName -BootOrder @($hd, $dvd, $net)
+    Write-Step "Seed ISO attached to '$VMName': $(Split-Path $IsoPath -Leaf)"
+}
+
+# =============================================================================
+# SSH upload helper (host → remote Linux VM)
+# =============================================================================
+function Send-SshFile {
+    param(
+        [string]$HostIp,
+        [string]$User,
+        [string]$KeyPath,
+        [string]$LocalPath,
+        [string]$RemotePath
+    )
+    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null `
+        -i $KeyPath $LocalPath "${User}@${HostIp}:$RemotePath"
+    if ($LASTEXITCODE -ne 0) {
+        throw "SCP upload failed: $LocalPath → ${User}@${HostIp}:$RemotePath"
     }
 }

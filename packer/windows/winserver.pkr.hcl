@@ -1,7 +1,8 @@
 # =============================================================================
 # packer/windows/winserver.pkr.hcl
-# Builds the Windows Server 2025 Core k3s agent (Windows worker node) VM.
-# Uses the Hyper-V ISO builder with WinRM communicator.
+# Builds a Windows Server golden base VHDX for k3s worker nodes.
+# Supports WS2022 and WS2025 via the os_version variable.
+# The resulting VHDX is the read-only parent for per-node differencing disks.
 # =============================================================================
 
 packer {
@@ -15,11 +16,16 @@ packer {
 }
 
 # ---------------------------------------------------------------------------
-# Variables (injected by Build-WindowsVM.ps1 via -var flags)
+# Variables (injected by Build-WindowsBase.ps1 via -var flags)
 # ---------------------------------------------------------------------------
+variable "os_version" {
+  type    = string
+  default = "2025"
+  # Valid: "2022" | "2025"
+}
 variable "vm_name" {
   type    = string
-  default = "k8s-windows-worker"
+  default = "k8s-windows-base"
 }
 variable "cpu_count" {
   type    = number
@@ -47,26 +53,13 @@ variable "iso_path" {
 }
 variable "output_dir" {
   type    = string
-  default = "../../vhdx/windows"
+  default = "../../vhdx/windows-base"
 }
 # Kubernetes version string (no +k3sN suffix), e.g. v1.32.5
 # Used to download upstream kubelet.exe and kube-proxy.exe from dl.k8s.io
 variable "k8s_version" {
   type    = string
   default = "v1.32.5"
-}
-variable "k3s_server_ip" {
-  type = string
-}
-# base64-encoded k3s admin kubeconfig (server IP already patched to k3s_server_ip)
-variable "kubeconfig_b64" {
-  type      = string
-  sensitive = true
-}
-# base64-encoded flannel ServiceAccount kubeconfig (limited node-read permissions)
-variable "flannel_kubeconfig_b64" {
-  type      = string
-  sensitive = true
 }
 variable "cluster_dns_ip" {
   type    = string
@@ -90,48 +83,52 @@ variable "wins_cni_version" {
 }
 variable "containerd_version" {
   type    = string
-  default = "2.3.1"
+  default = "1.7.32"
 }
 
 # ---------------------------------------------------------------------------
 source "hyperv-iso" "winserver" {
-  vm_name          = var.vm_name
-  cpus             = var.cpu_count
-  memory           = var.memory_mb
-  disk_size        = var.disk_size_mb
-  switch_name      = var.switch_name
-  generation       = 1          # Gen 1 for broadest driver compatibility with WS Core
+  vm_name               = var.vm_name
+  cpus                  = var.cpu_count
+  memory                = var.memory_mb
+  disk_size             = var.disk_size_mb
+  switch_name           = var.switch_name
+  generation            = 1          # Gen 1 for broadest driver compatibility
   enable_dynamic_memory = false
-  guest_additions_mode = "disable"
+  guest_additions_mode  = "disable"
 
-  iso_url          = var.iso_path
-  iso_checksum     = "none"     # local eval ISO; checksum verified by download script
+  iso_url      = var.iso_path
+  iso_checksum = "none"     # local eval ISO; checksum verified by download script
 
-  # Mount autounattend as a secondary floppy image
-  floppy_files     = ["autounattend/autounattend.xml"]
+  # floppy_files places each listed file at the ROOT of the floppy (A:\).
+  # Windows Setup only looks for autounattend.xml at the floppy root — floppy_dirs
+  # would copy the directory itself (A:\2022\autounattend.xml) which Setup ignores.
+  floppy_files = [
+    "autounattend/${var.os_version}/autounattend.xml",
+    "autounattend/${var.os_version}/winrm-setup.ps1",
+  ]
 
   # WinRM communicator
-  communicator     = "winrm"
-  winrm_username   = "Administrator"
-  winrm_password   = var.admin_pass
-  winrm_timeout    = "90m"
-  winrm_use_ssl    = false
-  winrm_insecure   = true
-  winrm_port       = 5985
+  communicator  = "winrm"
+  winrm_username = "Administrator"
+  winrm_password = var.admin_pass
+  winrm_timeout  = "90m"
+  winrm_use_ssl  = false
+  winrm_insecure = true
+  winrm_port     = 5985
 
-  boot_wait        = "3s"
-  # No boot_command needed — autounattend.xml drives the install fully
+  boot_wait = "30s"   # Windows Setup reads autounattend immediately; 30s is enough for Hyper-V to initialise
 
   shutdown_command = "shutdown /s /t 10 /f /d p:4:1 /c \"Packer shutdown\""
   shutdown_timeout = "15m"
 
   output_directory = var.output_dir
-  headless         = true
+  headless         = false   # show VM console so we can observe Windows setup progress
 }
 
 # ---------------------------------------------------------------------------
 build {
-  name    = "winserver-k3s-agent"
+  name    = "winserver-k3s-base"
   sources = ["source.hyperv-iso.winserver"]
 
   # --- 1: Base hardening & WinRM tuning ---
@@ -146,11 +143,11 @@ build {
 
   # Packer waits for WinRM to come back after the feature-install reboot
   provisioner "windows-restart" {
-    restart_timeout      = "15m"
+    restart_timeout       = "15m"
     restart_check_command = "powershell -command \"Get-WindowsFeature Containers | Where-Object {$_.InstallState -eq 'Installed'}\""
   }
 
-  # --- 3: Install containerd ---
+  # --- 3: Install containerd (pinned to v1.x for CRI v1 gRPC API compatibility) ---
   provisioner "powershell" {
     script = "scripts/03-containerd.ps1"
     environment_vars = [
@@ -158,14 +155,13 @@ build {
     ]
   }
 
-  # --- 4: Install upstream kubelet + flanneld + kube-proxy ---
+  # --- 4: Install Kubernetes binaries (kubelet, kube-proxy, kubectl, flanneld, CNI plugins) ---
+  #         Also writes static config files and registers StartNetwork/StartKubeProxy tasks.
+  #         Does NOT write per-node kubeconfigs — those are injected offline by Join-Nodes.ps1.
   provisioner "powershell" {
-    script = "scripts/04-k3s-agent.ps1"
+    script = "scripts/04-install-k8s-binaries.ps1"
     environment_vars = [
       "K8S_VERSION=${var.k8s_version}",
-      "K3S_SERVER_IP=${var.k3s_server_ip}",
-      "KUBECONFIG_B64=${var.kubeconfig_b64}",
-      "FLANNEL_KUBECONFIG_B64=${var.flannel_kubeconfig_b64}",
       "CLUSTER_DNS_IP=${var.cluster_dns_ip}",
       "CLUSTER_CIDR=${var.cluster_cidr}",
       "SERVICE_CIDR=${var.service_cidr}",
@@ -173,4 +169,12 @@ build {
       "WINS_CNI_VERSION=${var.wins_cni_version}"
     ]
   }
+
+  # --- 5: Create C:\k8s-firstboot.ps1 template + scheduled task ---
+  #         First-boot script reads C:\k8s-node-config.json (injected per-node by Join-Nodes.ps1)
+  #         and registers kubelet service, writes kubeconfigs, renames computer, reboots.
+  provisioner "powershell" {
+    script = "scripts/05-firstboot-setup.ps1"
+  }
 }
+

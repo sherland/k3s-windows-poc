@@ -1,0 +1,60 @@
+# Cilium Helm values for k3s on Hyper-V (Linux CP + Linux workers)
+# Used by Apply-CNI.ps1 when CNIPlugin = 'cilium'.
+#
+# NOTE: Flannel (default) is recommended for mixed topologies with Windows workers.
+# Cilium only supports Linux nodes (use flannel or multus if Windows workers are needed).
+
+# Disable kube-proxy replacement — k3s already embeds its own proxy
+# Note: v1.14+ uses boolean false (string "disabled" removed in v1.16)
+kubeProxyReplacement: false
+
+# Routing mode: native (L2 / host-gw equivalent; replaces deprecated 'tunnel: disabled' removed in v1.15)
+routingMode: native
+
+# Required when routingMode=native + ipam=kubernetes + ipv4-masquerade enabled
+ipv4NativeRoutingCIDR: "10.42.0.0/16"
+
+# Enable native routing (host-gw mode equivalent for Cilium)
+autoDirectNodeRoutes: true
+
+# Match k3s pod CIDR from config/variables.ps1
+ipam:
+  mode: kubernetes
+
+# k3s-specific: write Cilium CNI conf to the k3s agent CNI directory.
+# k3s containerd reads from /var/lib/rancher/k3s/agent/etc/cni/net.d (not /etc/cni/net.d).
+# CNI binaries go to /opt/cni/bin which k3s containerd also scans.
+cni:
+  confFileMountPath: /var/lib/rancher/k3s/agent/etc/cni/net.d
+  binPath: /opt/cni/bin
+
+# Node port acceleration (Linux-only)
+nodePort:
+  enabled: true
+  acceleration: disabled   # requires native XDP; disable for Hyper-V vNICs
+
+# Host services / DSR (disable for Hyper-V compatibility)
+hostServices:
+  enabled: false
+
+# Banding externalIPs to nodePort range
+externalIPs:
+  enabled: true
+
+# Operator — single replica is fine for a small cluster
+operator:
+  replicas: 1
+  prometheus:
+    enabled: false
+
+# Prometheus metrics (optional; remove if not needed)
+prometheus:
+  enabled: false
+
+# Hubble observability (optional; disable to save resources)
+hubble:
+  enabled: false
+  relay:
+    enabled: false
+  ui:
+    enabled: false
