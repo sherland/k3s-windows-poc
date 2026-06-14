@@ -1,0 +1,44 @@
+# =============================================================================
+# Build Outputs & Generated Artifacts
+# =============================================================================
+
+# All runtime output: kubeconfig, IPs, SSH keys, sentinel files, packer logs
+output/
+
+# Hyper-V VM disk images and machine configuration exported by Packer
+vhdx/
+
+# =============================================================================
+# Packer Artifacts
+# =============================================================================
+
+# Packer download cache — contains large ISO images and .iso.lock files
+# created automatically under packer/linux/packer_cache/ and
+# packer/windows/packer_cache/ during `packer build`.
+**/packer_cache/
+
+# ISOs placed manually or downloaded for the Windows Server Packer build.
+# These are large binaries (several GB) and must never be committed.
+packer/windows/iso/
+
+# Catch any stray ISO or lock file that lands outside a packer_cache dir
+*.iso
+*.iso.lock
+
+# =============================================================================
+# Logs
+# =============================================================================
+
+# Packer and build logs (also written to output/, which is already excluded)
+*.log
+
+# =============================================================================
+# Editor & OS Noise
+# =============================================================================
+
+# VS Code workspace / launch settings (user-specific, not project config)
+.vscode/
+
+# Windows Explorer thumbnail cache and folder layout files
+Thumbs.db
+desktop.ini

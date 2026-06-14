@@ -1,0 +1,86 @@
+#cloud-config
+# Ubuntu 24.04 autoinstall user-data
+# Packer serves this via its built-in HTTP server on port {{ .HTTPPort }}
+autoinstall:
+  version: 1
+  apt:
+    disable_components: []
+    geoip: true
+    preserve_sources_list: false
+    primary:
+      - arches: [amd64, i386]
+        uri: http://archive.ubuntu.com/ubuntu
+      - arches: [default]
+        uri: http://ports.ubuntu.com/ubuntu-ports
+  drivers:
+    install: false
+  identity:
+    hostname: k8s-linux-master
+    # password is set via the 'users' section below; this field is required but overridden
+    password: ''
+    realname: k8sadmin
+    username: k8sadmin
+  kernel:
+    package: linux-generic
+  keyboard:
+    layout: us
+    toggle: null
+    variant: ''
+  locale: en_US.UTF-8
+  network:
+    ethernets:
+      eth0:
+        dhcp4: true
+        dhcp-identifier: mac
+    version: 2
+  ssh:
+    allow-pw: true
+    authorized-keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBK1b4ziRnLY9YK8VRQpt7o+fJxQ74CFZL0cQLTFPXxY packer-linux-build
+    install-server: true
+  storage:
+    layout:
+      name: lvm
+      sizing-policy: all
+  user-data:
+    ssh_pwauth: true
+    disable_root: false
+    users:
+      - name: k8sadmin
+        # bcrypt hash for the password in variables.ps1 — placeholder replaced by Build-LinuxVM.ps1
+        passwd: $6$rPgc2OKvE64QsR/P$8besCBXXl.SoA9HwnocCCz6k8MKiDrVLg0WAQEclc/YT7wX9UjBTL5wkiq35v9JHHw/EvmaiJxZ/32bhPHUUJ0
+        groups: [adm, sudo, docker]
+        lock_passwd: false
+        shell: /bin/bash
+        sudo: ALL=(ALL) NOPASSWD:ALL
+        # SSH public key injected by Build-LinuxVM.ps1 from the ephemeral keypair
+        ssh_authorized_keys:
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBK1b4ziRnLY9YK8VRQpt7o+fJxQ74CFZL0cQLTFPXxY packer-linux-build
+  late-commands:
+    # Install Hyper-V cloud tools so hv_kvp_daemon runs at boot.
+    # This daemon is required for Packer to discover the VM's IP address via the Hyper-V KVP channel.
+    # Use linux-tools-generic + linux-cloud-tools-generic (both in main).
+    # Their kernel-specific dependencies resolve from the TARGET's installed dpkg state,
+    # NOT from `uname -r` (which would return the installer kernel — wrong version).
+    # The udev rules in these packages auto-start hv_kvp_daemon when the vmbus device appears.
+    - curtin in-target --target=/target -- apt-get install -y linux-tools-generic linux-cloud-tools-generic
+    # Allow SSH password auth so Packer can connect after the installed system boots.
+    # Strategy (triple belt-and-suspenders):
+    # 1. Patch the main sshd_config in case it has an explicit directive.
+    - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /target/etc/ssh/sshd_config
+    # 2. Create 00-packer.conf UNCONDITIONALLY.
+    #    OpenSSH processes Include'd drop-ins in alphabetical order, FIRST match wins.
+    #    00-packer.conf sorts before cloud-init's 50-cloud-init.conf, so it always wins
+    #    even when cloud-init rewrites 50-cloud-init.conf with 'no' on first boot.
+    - mkdir -p /target/etc/ssh/sshd_config.d
+    - echo "PasswordAuthentication yes" > /target/etc/ssh/sshd_config.d/00-packer.conf
+    # 3. Also patch 50-cloud-init.conf if it already exists in the chroot (no-op if absent).
+    - sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /target/etc/ssh/sshd_config.d/50-cloud-init.conf || true
+    # 4. Write ssh_pwauth:true directly into cloud.cfg.d so cloud-init on first boot
+    #    writes 'yes' (not 'no') into 50-cloud-init.conf regardless of datasource propagation.
+    - mkdir -p /target/etc/cloud/cloud.cfg.d
+    - 'echo "ssh_pwauth: true" > /target/etc/cloud/cloud.cfg.d/99-packer-ssh.cfg'
+    - sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /target/etc/ssh/sshd_config
+    # Ensure the admin user has sudo without password
+    - echo 'k8sadmin ALL=(ALL) NOPASSWD:ALL' > /target/etc/sudoers.d/k8sadmin
+    - chmod 440 /target/etc/sudoers.d/k8sadmin
