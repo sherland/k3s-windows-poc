@@ -1,6 +1,6 @@
 # =============================================================================
 # Run-ScenarioA.ps1
-# Test Case A: 1 control-plane + 1 Linux worker + 1 Windows node (WS2022)
+# Test Case A: 1 control-plane + 2 Linux workers + 1 Windows node (WS2022)
 #              CNI: flannel (k3s embedded)
 #
 # Tears down any existing cluster (preserving downloaded ISOs and Packer cache),
@@ -8,6 +8,7 @@
 #
 # USAGE (elevated shell):
 #   .\Run-ScenarioA.ps1
+#   .\Run-ScenarioA.ps1 -NoExtraWorker        # use only 1 Linux worker (skip k8s-lnx-02)
 #   .\Run-ScenarioA.ps1 -DeleteGoldenImages   # also rebuild Packer base images from scratch
 #   .\Run-ScenarioA.ps1 -SkipCleanup          # skip teardown, jump straight to Main.ps1
 # =============================================================================
@@ -17,7 +18,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipCleanup,       # skip teardown (useful when re-running after partial failure)
-    [switch]$DeleteGoldenImages # also delete golden base VHDXs so Packer rebuilds them from scratch
+    [switch]$DeleteGoldenImages,# also delete golden base VHDXs so Packer rebuilds them from scratch
+    [switch]$NoExtraWorker      # skip the extra Linux worker (k8s-lnx-02); use only 1 Linux worker
 )
 
 Set-StrictMode -Version Latest
@@ -34,7 +36,9 @@ function Write-Banner([string]$msg) {
 # ---------------------------------------------------------------------------
 # 1. Patch config/variables.ps1 for Scenario A
 # ---------------------------------------------------------------------------
-Write-Banner "SCENARIO A — flannel + CP + 1 Linux worker + 1 Windows node (WS2022)"
+$workerCount = if ($NoExtraWorker) { 1 } else { 2 }
+$workerLabel = if ($NoExtraWorker) { '1 Linux worker' } else { '2 Linux workers (lnx-01: 4 GB, lnx-02: 2 GB)' }
+Write-Banner "SCENARIO A — flannel + CP + $workerLabel + 1 Windows node (WS2022)"
 
 $configPath = Join-Path $ScriptRoot 'config\variables.ps1'
 $cfg = Get-Content $configPath -Raw
@@ -44,13 +48,18 @@ $cfg = $cfg -replace `
     "\`$script:CNIPlugin\s*=\s*'[^']*'([^\n]*)", `
     "`$script:CNIPlugin      = 'flannel'    # 'flannel' (embedded, default) | 'cilium' | 'multus'"
 
+# Set LinuxWorkerCount
+$cfg = $cfg -replace `
+    "\`$script:LinuxWorkerCount\s*=\s*\d+([^\n]*)", `
+    "`$script:LinuxWorkerCount     = $workerCount             # 0 = control-plane only"
+
 # Set WindowsNodeSpecs = 1x WS2022
 $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @(`n    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }`n)"
 
 Set-Content $configPath $cfg -Encoding UTF8
-Write-Host "[OK] config/variables.ps1 → CNI=flannel, WindowsNodeSpecs=1×WS2022" -ForegroundColor Green
+Write-Host "[OK] config/variables.ps1 → CNI=flannel, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=1×WS2022" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # 2. Teardown (VMs + VHDXs + sentinels + output files, keep ISOs + cache)

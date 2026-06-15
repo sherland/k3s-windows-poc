@@ -100,8 +100,10 @@ function New-LinuxNode {
 
     $memMB = if ($NodeName -eq $script:ControlPlaneVMName) {
         $script:ControlPlaneRAM
+    } elseif ($NodeName -eq ('{0}-01' -f $script:LinuxWorkerPrefix)) {
+        $script:LinuxWorkerRAM           # primary worker — full RAM
     } else {
-        $script:LinuxWorkerRAM
+        $script:ExtraLinuxWorkerRAM      # extra workers (lnx-02 +) — reduced RAM
     }
     $cpu = if ($NodeName -eq $script:ControlPlaneVMName) {
         $script:ControlPlaneCPU

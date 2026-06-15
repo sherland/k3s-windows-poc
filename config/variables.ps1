@@ -22,10 +22,11 @@ $script:ControlPlaneRAM     = 4096           # MB
 # -----------------------------------------------------------------------------
 # Linux Workers
 # -----------------------------------------------------------------------------
-$script:LinuxWorkerPrefix   = 'k8s-lnx'     # → k8s-lnx-01, k8s-lnx-02
-$script:LinuxWorkerCount    = 1             # 0 = control-plane only
-$script:LinuxWorkerCPU      = 2
-$script:LinuxWorkerRAM      = 4096          # MB
+$script:LinuxWorkerPrefix    = 'k8s-lnx'     # → k8s-lnx-01, k8s-lnx-02
+$script:LinuxWorkerCount     = 2             # 0 = control-plane only
+$script:LinuxWorkerCPU       = 2
+$script:LinuxWorkerRAM       = 4096          # MB — primary worker (k8s-lnx-01)
+$script:ExtraLinuxWorkerRAM  = 2048          # MB — additional workers (k8s-lnx-02 and beyond)
 
 # -----------------------------------------------------------------------------
 # Windows Workers
@@ -106,6 +107,7 @@ $script:K3sReadyTimeoutSec    = 300   # wait for k3s to report active/Ready
 $script:WinRMTimeoutSec       = 600   # wait for VMBus session after Windows boot
 $script:NodeJoinTimeoutSec    = 300   # wait for node to appear in kubectl get nodes
 $script:NodeReadyTimeoutSec   = 600   # wait for node to transition to Ready
+
 
 
 

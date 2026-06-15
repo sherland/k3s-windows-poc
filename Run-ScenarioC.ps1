@@ -1,6 +1,6 @@
 # =============================================================================
 # Run-ScenarioC.ps1
-# Test Case C: 1 control-plane + 1 Linux worker, NO Windows nodes
+# Test Case C: 1 control-plane + 2 Linux workers, NO Windows nodes
 #              CNI: Cilium (replaces k3s embedded flannel entirely)
 #
 # k3s is started with --flannel-backend=none so that Cilium owns all networking.
@@ -11,6 +11,7 @@
 #
 # USAGE (elevated shell):
 #   .\Run-ScenarioC.ps1
+#   .\Run-ScenarioC.ps1 -NoExtraWorker        # use only 1 Linux worker (skip k8s-lnx-02)
 #   .\Run-ScenarioC.ps1 -DeleteGoldenImages   # also rebuild Packer base images from scratch
 #   .\Run-ScenarioC.ps1 -SkipCleanup          # skip teardown (e.g. re-run after B passed)
 # =============================================================================
@@ -20,7 +21,8 @@
 [CmdletBinding()]
 param(
     [switch]$SkipCleanup,       # skip teardown (useful when chaining after Scenario B)
-    [switch]$DeleteGoldenImages # also delete golden base VHDXs so Packer rebuilds them from scratch
+    [switch]$DeleteGoldenImages,# also delete golden base VHDXs so Packer rebuilds them from scratch
+    [switch]$NoExtraWorker      # skip the extra Linux worker (k8s-lnx-02); use only 1 Linux worker
 )
 
 Set-StrictMode -Version Latest
@@ -37,7 +39,9 @@ function Write-Banner([string]$msg) {
 # ---------------------------------------------------------------------------
 # 1. Patch config/variables.ps1 for Scenario C
 # ---------------------------------------------------------------------------
-Write-Banner "SCENARIO C — Cilium CNI + CP + 1 Linux worker, no Windows nodes"
+$workerCount = if ($NoExtraWorker) { 1 } else { 2 }
+$workerLabel = if ($NoExtraWorker) { '1 Linux worker' } else { '2 Linux workers (lnx-01: 4 GB, lnx-02: 2 GB)' }
+Write-Banner "SCENARIO C — Cilium CNI + CP + $workerLabel, no Windows nodes"
 
 $configPath = Join-Path $ScriptRoot 'config\variables.ps1'
 $cfg = Get-Content $configPath -Raw
@@ -47,13 +51,18 @@ $cfg = $cfg -replace `
     "\`$script:CNIPlugin\s*=\s*'[^']*'([^\n]*)", `
     "`$script:CNIPlugin      = 'cilium'    # 'flannel' (embedded, default) | 'cilium' | 'multus'"
 
+# Set LinuxWorkerCount
+$cfg = $cfg -replace `
+    "\`$script:LinuxWorkerCount\s*=\s*\d+([^\n]*)", `
+    "`$script:LinuxWorkerCount     = $workerCount             # 0 = control-plane only"
+
 # Set WindowsNodeSpecs = empty (Cilium is Linux-only)
 $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario C"
 
 Set-Content $configPath $cfg -Encoding UTF8
-Write-Host "[OK] config/variables.ps1 → CNI=cilium, WindowsNodeSpecs=@()" -ForegroundColor Green
+Write-Host "[OK] config/variables.ps1 → CNI=cilium, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=@()" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # 2. Teardown (VMs + VHDXs + sentinels + output files, keep ISOs + cache)

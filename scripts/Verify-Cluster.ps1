@@ -261,7 +261,7 @@ function Wait-TestPodsReady {
 
 function Test-CrossNodeConnectivity {
     param([object[]]$Pods)
-    Write-Step "=== 6-8. Cross-node connectivity ==="
+    Write-Step "=== 6-8. Cross-node connectivity (all node pairs) ==="
 
     # Group pods by node
     $podsByNode = @{}
@@ -274,64 +274,80 @@ function Test-CrossNodeConnectivity {
     }
 
     Write-Step "  Pod distribution:"
-    foreach ($node in $podsByNode.Keys) {
+    foreach ($node in ($podsByNode.Keys | Sort-Object)) {
         foreach ($pod in $podsByNode[$node]) {
             Write-Step "    $($pod.Name) on $node → $($pod.IP)"
         }
     }
 
-    $nodeNames = @($podsByNode.Keys)
+    $nodeNames = @($podsByNode.Keys | Sort-Object)
     if ($nodeNames.Count -lt 2) {
         Write-Warn "Only 1 Linux node found — cross-node test requires 2+. Skipping cross-node tests."
         Record-Result $false "Cross-node connectivity (2+ nodes required)" "only $($nodeNames.Count) node"
         return
     }
 
-    # Pick two pods on DIFFERENT nodes
-    $nodeA   = $nodeNames[0]
-    $nodeB   = $nodeNames[1]
-    $podA    = $podsByNode[$nodeA][0]
-    $podB    = $podsByNode[$nodeB][0]
+    # Test every unique ordered pair (A→B) for ICMP + HTTP
+    # For N nodes: N*(N-1) directed pairs, or N*(N-1)/2 unique undirected pairs
+    # We test each undirected pair in both directions for ICMP; one direction for HTTP
+    for ($i = 0; $i -lt $nodeNames.Count; $i++) {
+        for ($j = $i + 1; $j -lt $nodeNames.Count; $j++) {
+            $nodeA = $nodeNames[$i]
+            $nodeB = $nodeNames[$j]
+            $podA  = $podsByNode[$nodeA][0]
+            $podB  = $podsByNode[$nodeB][0]
 
-    Write-Step "  Source: $($podA.Name) (node: $nodeA)"
-    Write-Step "  Target: $($podB.Name) (node: $nodeB, IP: $($podB.IP))"
+            Write-Step "  --- Pair: $nodeA ↔ $nodeB ---"
 
-    # --- ICMP ping ---
-    Write-Step "  [6] ICMP ping $($podA.Name) → $($podB.IP)..."
-    try {
-        $pingOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
-            'ping', '-c', '4', '-W', '2', $podB.IP)
-        $pingOk  = ($LASTEXITCODE -eq 0) -and ($pingOut | Where-Object { $_ -match '4 received|4 packets received' })
-        Record-Result $pingOk "Cross-node ICMP ping ($nodeA → $nodeB)" `
-            ($pingOut | Where-Object { $_ -match 'packet' } | Select-Object -Last 1)
-    } catch {
-        Record-Result $false "Cross-node ICMP ping ($nodeA → $nodeB)" "$_"
-    }
+            # --- ICMP ping A→B ---
+            Write-Step "  [6] ICMP $($podA.Name) ($nodeA) → $($podB.IP) ($nodeB)..."
+            try {
+                $pingOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
+                    'ping', '-c', '4', '-W', '2', $podB.IP)
+                $pingOk = ($LASTEXITCODE -eq 0) -and ($pingOut | Where-Object { $_ -match '4 received|4 packets received' })
+                Record-Result $pingOk "ICMP ping $nodeA → $nodeB ($($podB.IP))" `
+                    ($pingOut | Where-Object { $_ -match 'packet' } | Select-Object -Last 1)
+            } catch {
+                Record-Result $false "ICMP ping $nodeA → $nodeB" "$_"
+            }
 
-    # --- HTTP curl ---
-    Write-Step "  [7] HTTP curl $($podA.Name) → http://$($podB.IP):8080..."
-    try {
-        # Give the nc server on podB a moment (it may have been consumed by a prior request)
-        Start-Sleep -Seconds 2
-        $curlOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
-            'wget', '-qO-', '--timeout=5', "http://$($podB.IP):8080")
-        $curlOk  = ($LASTEXITCODE -eq 0)
-        $curlDetail = if ($curlOut) { $curlOut -join ' ' } else { 'no response' }
-        Record-Result $curlOk "Cross-node HTTP (wget $nodeA → pod on $nodeB)" $curlDetail
-    } catch {
-        Record-Result $false "Cross-node HTTP (wget $nodeA → pod on $nodeB)" "$_"
-    }
+            # --- ICMP ping B→A ---
+            Write-Step "  [6] ICMP $($podB.Name) ($nodeB) → $($podA.IP) ($nodeA)..."
+            try {
+                $pingOut2 = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podB.Name, '--',
+                    'ping', '-c', '4', '-W', '2', $podA.IP)
+                $pingOk2 = ($LASTEXITCODE -eq 0) -and ($pingOut2 | Where-Object { $_ -match '4 received|4 packets received' })
+                Record-Result $pingOk2 "ICMP ping $nodeB → $nodeA ($($podA.IP))" `
+                    ($pingOut2 | Where-Object { $_ -match 'packet' } | Select-Object -Last 1)
+            } catch {
+                Record-Result $false "ICMP ping $nodeB → $nodeA" "$_"
+            }
 
-    # --- DNS inside pods ---
-    Write-Step "  [8] DNS resolution inside $($podA.Name)..."
-    try {
-        $dnsOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
-            'nslookup', 'kubernetes.default.svc.cluster.local')
-        $dnsOk  = ($LASTEXITCODE -eq 0) -and ($dnsOut | Where-Object { $_ -match 'Address' })
-        Record-Result $dnsOk "DNS resolution (kubernetes.default.svc.cluster.local)" `
-            ($dnsOut | Where-Object { $_ -match 'Address' } | Select-Object -Last 1)
-    } catch {
-        Record-Result $false "DNS resolution inside pod" "$_"
+            # --- HTTP curl A→B ---
+            Write-Step "  [7] HTTP $($podA.Name) → http://$($podB.IP):8080..."
+            try {
+                Start-Sleep -Seconds 1
+                $curlOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
+                    'wget', '-qO-', '--timeout=5', "http://$($podB.IP):8080")
+                $curlOk = ($LASTEXITCODE -eq 0)
+                $curlDetail = $(if ($curlOut) { $curlOut -join ' ' } else { 'no response' })
+                Record-Result $curlOk "HTTP wget $nodeA → pod on $nodeB ($($podB.IP):8080)" $curlDetail
+            } catch {
+                Record-Result $false "HTTP wget $nodeA → pod on $nodeB" "$_"
+            }
+
+            # --- DNS inside A ---
+            Write-Step "  [8] DNS in $($podA.Name)..."
+            try {
+                $dnsOut = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $podA.Name, '--',
+                    'nslookup', 'kubernetes.default.svc.cluster.local')
+                $dnsOk = ($LASTEXITCODE -eq 0) -and ($dnsOut | Where-Object { $_ -match 'Address' })
+                Record-Result $dnsOk "DNS kubernetes.default.svc.cluster.local (from $nodeA)" `
+                    ($dnsOut | Where-Object { $_ -match 'Address' } | Select-Object -Last 1)
+            } catch {
+                Record-Result $false "DNS resolution from $nodeA" "$_"
+            }
+        }
     }
 }
 
