@@ -51,10 +51,10 @@ operator:
 prometheus:
   enabled: false
 
-# Hubble observability (optional; disable to save resources)
+# Hubble observability — provides flow visibility; used by Phase 10 Hubble tests
 hubble:
-  enabled: false
+  enabled: true
   relay:
-    enabled: false
+    enabled: true
   ui:
-    enabled: false
+    enabled: true

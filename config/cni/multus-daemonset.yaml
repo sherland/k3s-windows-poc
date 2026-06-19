@@ -67,7 +67,7 @@ rules:
     verbs: ["*"]
   - apiGroups: [""]
     resources: ["pods", "pods/status"]
-    verbs: ["get", "update"]
+    verbs: ["get", "list", "update", "watch"]
   - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]
     verbs: ["create", "patch", "update"]
@@ -108,6 +108,7 @@ spec:
         name: multus
     spec:
       hostNetwork: true
+      hostPID: true
       tolerations:
         - operator: Exists
           effect: NoSchedule
@@ -118,7 +119,7 @@ spec:
           command:
             - cp
             - /usr/src/multus-cni/bin/multus-shim
-            - /host/opt/cni/bin/multus-shim
+            - /host/k3s-cni/multus-shim
           resources:
             requests:
               cpu: "10m"
@@ -127,7 +128,7 @@ spec:
             privileged: true
           volumeMounts:
             - name: cni-bin-dir
-              mountPath: /host/opt/cni/bin
+              mountPath: /host/k3s-cni
               mountPropagation: Bidirectional
         - name: generate-multus-config
           image: ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick
@@ -140,9 +141,11 @@ spec:
               {
                 "cniVersion": "0.3.1",
                 "logLevel": "verbose",
+                "logToStderr": true,
                 "cniConfigDir": "/host/etc/cni/net.d",
                 "multusAutoconfigDir": "/host/etc/cni/net.d",
                 "multusKubeconfigFileHost": "/var/lib/rancher/k3s/agent/etc/cni/net.d/multus.d/multus.kubeconfig",
+                "socketDir": "/host/run/multus/",
                 "namespaceIsolation": false,
                 "globalNamespaces": "default,kube-system,kube-public"
               }
@@ -173,6 +176,14 @@ spec:
             - name: cni-cfg
               mountPath: /host/etc/cni/net.d
               mountPropagation: Bidirectional
+            # k3s CNI binaries (flannel, etc.) mounted at standard /opt/cni/bin so multus-daemon can find them
+            - name: cni-bin-dir
+              mountPath: /opt/cni/bin
+              mountPropagation: HostToContainer
+            # k3s data dir — needed so absolute symlinks in cni-bin-dir resolve (k3s uses hash-named sub-dirs)
+            - name: k3s-data-dir
+              mountPath: /var/lib/rancher/k3s/data
+              mountPropagation: HostToContainer
             - name: host-run
               mountPath: /host/run
               mountPropagation: Bidirectional
@@ -182,11 +193,22 @@ spec:
             - name: host-run-k8s-cni
               mountPath: /run/k8s.cni.cncf.io
               mountPropagation: Bidirectional
+            - name: hostroot
+              mountPath: /hostroot
+              mountPropagation: HostToContainer
+            - name: host-run-netns
+              mountPath: /run/netns
+              mountPropagation: HostToContainer
+            # flannel subnet env — needed by flannel CNI plugin when called inside the daemon container
+            - name: host-run-flannel
+              mountPath: /run/flannel
+              mountPropagation: HostToContainer
           terminationMessagePolicy: FallbackToLogsOnError
       volumes:
+        # k3s CNI bin dir (containerd bin_dir in config.toml)
         - name: cni-bin-dir
           hostPath:
-            path: /opt/cni/bin
+            path: /var/lib/rancher/k3s/data/cni
         # k3s CNI conf dir (flannel writes 10-flannel.conflist here)
         - name: cni-cfg
           hostPath:
@@ -200,5 +222,17 @@ spec:
         - name: host-run-k8s-cni
           hostPath:
             path: /run/k8s.cni.cncf.io
+        - name: k3s-data-dir
+          hostPath:
+            path: /var/lib/rancher/k3s/data
+        - name: hostroot
+          hostPath:
+            path: /
+        - name: host-run-netns
+          hostPath:
+            path: /run/netns
+        - name: host-run-flannel
+          hostPath:
+            path: /run/flannel
       nodeSelector:
         kubernetes.io/os: linux

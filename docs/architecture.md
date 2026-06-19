@@ -13,7 +13,7 @@ enabling fast node provisioning and reproducible rebuilds.
 3. [How Nodes Are Created from Golden Images](#3-how-nodes-are-created-from-golden-images)
 4. [How Node Identities Are Injected](#4-how-node-identities-are-injected)
 5. [How Workers Join the Cluster](#5-how-workers-join-the-cluster)
-6. [Scenario Comparison — A, B, C, D](#6-scenario-comparison--a-b-c-d)
+6. [Scenario Comparison — A, B, C, D, E](#6-scenario-comparison--a-b-c-d-e)
 7. [Service Mesh Considerations](#7-service-mesh-considerations)
 8. [CNI Deep Dive](#8-cni-deep-dive)
 9. [Node Roles and Installed Components](#9-node-roles-and-installed-components)
@@ -313,7 +313,7 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ---
 
-## 6. Scenario Comparison — A, B, C, D
+## 6. Scenario Comparison — A, B, C, D, E
 
 All scenarios use k3s v1.32.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
@@ -324,7 +324,7 @@ workers. They differ in CNI plugin, Windows node support, and networking capabil
 
 **Script:** `Run-ScenarioA.ps1` | **Verified:** 18/18 PASS
 
-**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-win-01 (WS2022)
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
 
 **How it works:**
 
@@ -361,9 +361,9 @@ development or CI environments where policy enforcement is not required.
 
 ### Scenario B — Multus (meta-CNI on top of Flannel)
 
-**Script:** `Run-ScenarioB.ps1` | **Verified:** 14/14 PASS
+**Script:** `Run-ScenarioB.ps1` | **Verified:** 25/25 PASS
 
-**Topology:** k8s-cp-01 + k8s-lnx-01 (Linux-only)
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
 **How it works:**
 
@@ -409,11 +409,11 @@ that need pod network isolation at the L2/VLAN level without replacing the prima
 
 ---
 
-### Scenario C — Cilium (full CNI replacement)
+### Scenario C — Cilium (full CNI replacement) + Hubble
 
-**Script:** `Run-ScenarioC.ps1` | **Verified:** 13/13 PASS
+**Script:** `Run-ScenarioC.ps1` | **Verified:** 27/27 PASS
 
-**Topology:** k8s-cp-01 + k8s-lnx-01 (Linux-only)
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
 **How it works:**
 
@@ -441,7 +441,19 @@ ipam:
 cni:
   binPath: /var/lib/rancher/k3s/data/current/bin
   confPath: /var/lib/rancher/k3s/agent/etc/cni/net.d
+hubble:
+  enabled: true
+  relay:
+    enabled: true   # aggregates cross-node flow data
+  ui:
+    enabled: true
 ```
+
+Hubble is the built-in observability layer in Cilium. The **relay** aggregates per-node
+flow data into a single gRPC stream; the **UI** provides a browser dashboard. The `hubble`
+CLI is baked into the Cilium container image — no host-side tooling is needed.
+`Verify-Cluster.ps1` uses `kubectl exec` into a Cilium pod to run `hubble observe` and
+confirm that flows for the `kube-verify` namespace are captured.
 
 **Advantages:**
 - **eBPF-based**: high-performance kernel-space packet processing; lower latency
@@ -472,7 +484,7 @@ where Flannel's limitations are a bottleneck.
 
 **Script:** `Run-ScenarioD.ps1` | **Verified:** 13/13 PASS
 
-**Topology:** k8s-cp-01 + k8s-lnx-01 (Linux-only)
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
 **How it works:**
 
@@ -528,26 +540,94 @@ lifecycle; workloads that need GlobalNetworkPolicy or HostEndpoint policy.
 
 ---
 
-### Scenario Summary Table
+### Scenario E — Flannel + Chained Cilium (eBPF observability) + Windows worker
 
-| Capability | A (Flannel) | B (Multus) | C (Cilium) | D (Calico) |
-|-----------|:-----------:|:-----------:|:-----------:|:-----------:|
-| Windows workers | ✅ | ❌ | ❌ | ❌ |
-| Multi-homed pods | ❌ | ✅ | ❌† | ❌† |
-| NetworkPolicy (L3/L4) | ❌ | ❌ | ✅ | ✅ |
-| L7 NetworkPolicy (HTTP/gRPC) | ❌ | ❌ | ✅ | ❌ |
-| GlobalNetworkPolicy | ❌ | ❌ | ✅‡ | ✅ |
-| HostEndpoint policy | ❌ | ❌ | ✅ | ✅ |
-| Pod-to-pod encryption | ❌ | ❌ | ✅ (WG/IPsec) | ✅ (WG) |
-| eBPF data plane | ❌ | ❌ | ✅ | optional |
-| kube-proxy replacement | ❌ | ❌ | optional | ❌ |
-| Flow observability | ❌ | ❌ | ✅ (Hubble) | ❌ |
-| BGP peering | ❌ | ❌ | ❌ | ✅ |
-| Service mesh (sidecar) | add-on | add-on | sidecar-free | add-on |
-| Overlay protocol | none (L2) | none (L2) | none (L2)§ | VXLAN |
-| Operational complexity | low | medium | medium-high | medium-high |
+**Script:** `Run-ScenarioE.ps1` | **Verified:** 34/34 PASS
 
-† Cilium and Calico can be combined with Multus for multi-homed pods, but that is not
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
+
+**How it works:**
+
+Scenario E is a hybrid: Flannel remains the primary CNI (required for Windows worker
+compatibility) while Cilium is added in **generic-veth chaining mode** to provide eBPF
+observability on Linux nodes.
+
+k3s starts with Flannel enabled (`--flannel-backend=host-gw`). All nodes — including the
+Windows worker — join the cluster normally via Flannel. Only after all nodes are `Ready`
+does `Apply-CNI.ps1` install Cilium via Helm in chained mode.
+
+Cilium's `cni.chainingMode: generic-veth` inserts a Cilium eBPF program *between* the
+veth pair and Flannel's L3 routing. Flannel still handles IP assignment and routing;
+Cilium taps the traffic for policy enforcement, load balancing, and Hubble flow records.
+A `nodeSelector: kubernetes.io/os: linux` on the DaemonSet ensures Cilium pods only run
+on Linux nodes, leaving the Windows worker untouched.
+
+Configuration (`config/cni/cilium-chained-values.yaml`):
+```yaml
+cni:
+  chainingMode: generic-veth    # chain onto Flannel; do not replace it
+  binPath: /var/lib/rancher/k3s/data/current/bin
+  confFileMountPath: /var/lib/rancher/k3s/agent/etc/cni/net.d
+ipam:
+  mode: cluster-pool            # Cilium manages pod IPs within Flannel-assigned node CIDRs
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+    nodeSelector:
+      kubernetes.io/os: linux
+  ui:
+    enabled: true
+    nodeSelector:
+      kubernetes.io/os: linux
+```
+
+**Phase ordering (`Main.ps1`):** For `flannel+cilium`, all nodes (including Windows) join
+first (Phase 7), then Cilium is chained in post-join (Phase 8). This is the reverse of
+`cilium` and `calico` which apply the CNI *before* Phase 7.
+
+**Advantages:**
+- **Windows worker compatibility**: unlike standalone Cilium, this mode keeps Flannel as
+  the primary CNI so Windows workers can join with the standard `win-bridge`/`host-local`
+  CNI stack
+- **Hubble observability on Linux nodes**: same eBPF-level flow visibility as Scenario C,
+  without sacrificing Windows worker support
+- **Additive, non-destructive**: existing Flannel configuration is unchanged; Cilium adds
+  capability without replacing infrastructure
+- **No kube-proxy interaction**: Flannel handles routing; Cilium in chaining mode does not
+  replace kube-proxy, avoiding compatibility concerns
+
+**Disadvantages:**
+- Chaining mode is more complex to debug than standalone Cilium; two CNI plugins are
+  active simultaneously on Linux nodes
+- NetworkPolicy enforcement in chaining mode is limited compared to standalone Cilium
+  (Cilium can enforce policy, but interactions with Flannel routing need to be tested)
+- Windows nodes do not get eBPF visibility — Hubble only observes Linux-node traffic
+- Helm + Cilium operator overhead (same as Scenario C)
+
+**When to choose:** Mixed Linux/Windows clusters that need eBPF observability (Hubble)
+ on Linux workloads while retaining Windows worker support; teams not yet ready to
+migrate fully to Cilium as the primary CNI; environments that want to evaluate Hubble
+before committing to a full Cilium CNI migration.
+
+| Capability | A (Flannel) | B (Multus) | C (Cilium) | D (Calico) | E (Flannel+Cilium) |
+|-----------|:-----------:|:-----------:|:-----------:|:-----------:|:-------------------:|
+| Windows workers | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Multi-homed pods | ❌ | ✅ | ❌† | ❌† | ❌† |
+| NetworkPolicy (L3/L4) | ❌ | ❌ | ✅ | ✅ | partial (Linux) |
+| L7 NetworkPolicy (HTTP/gRPC) | ❌ | ❌ | ✅ | ❌ | ❌ |
+| GlobalNetworkPolicy | ❌ | ❌ | ✅‡ | ✅ | ❌ |
+| HostEndpoint policy | ❌ | ❌ | ✅ | ✅ | ❌ |
+| Pod-to-pod encryption | ❌ | ❌ | ✅ (WG/IPsec) | ✅ (WG) | ❌ |
+| eBPF data plane | ❌ | ❌ | ✅ | optional | Linux nodes only |
+| kube-proxy replacement | ❌ | ❌ | optional | ❌ | ❌ |
+| Flow observability | ❌ | ❌ | ✅ (Hubble) | ❌ | ✅ Linux (Hubble) |
+| BGP peering | ❌ | ❌ | ❌ | ✅ | ❌ |
+| Service mesh (sidecar) | add-on | add-on | sidecar-free | add-on | add-on |
+| Overlay protocol | none (L2) | none (L2) | none (L2)§ | VXLAN | none (L2) |
+| Operational complexity | low | medium | medium-high | medium-high | medium-high |
+
+† Cilium, Calico, and Flannel+Cilium can be combined with Multus for multi-homed pods, but that is not
   configured in these scenarios.
 ‡ Cilium calls these `CiliumClusterwideNetworkPolicy`.
 § Native routing is configured (`routingMode: native`); VXLAN mode is also supported.
@@ -774,9 +854,11 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 | 9 | `Export-KubeConfig.ps1` | `kubeconfig.done` | Copies + patches kubeconfig from CP VM |
 | 10 | `Verify-Cluster.ps1` | `verify.done` | Cross-node ICMP, HTTP, DNS, ClusterIP, CNI health, Windows pod |
 
-**Cilium/Calico phase ordering:** `Main.ps1` detects `CNIPlugin -in @('cilium', 'calico')`
-and runs Phase 8 (`Apply-CNI.ps1`) *before* Phase 7 (`Join-Nodes.ps1`) so that nodes have
-a working CNI when they join. Without this, nodes would stay `NotReady` indefinitely.
+**Phase ordering:** `Main.ps1` adjusts the Phase 7/8 order based on CNI:
+- `cilium` / `calico`: runs Phase 8 (`Apply-CNI.ps1`) *before* Phase 7 (`Join-Nodes.ps1`)
+  so nodes have a working CNI when they join (nodes stay `NotReady` without it).
+- `flannel+cilium`: runs Phase 7 first (Flannel handles routing; all nodes incl. Windows
+  join normally), then Phase 8 chains Cilium in post-join.
 
 All phases are **idempotent** via sentinel files in `output/sentinels/`. Delete a sentinel
 or pass `-ForcePhase N` to `Main.ps1` to re-run a phase.

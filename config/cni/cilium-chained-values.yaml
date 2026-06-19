@@ -1,0 +1,60 @@
+# Cilium Helm values — CNI chaining mode on top of k3s embedded Flannel.
+# Used by Apply-CNI.ps1 when CNIPlugin = 'flannel+cilium'.
+#
+# Flannel continues to own IPAM and routing; Cilium attaches eBPF programs
+# on Linux nodes only. Windows nodes are unaffected.
+
+# Chain onto k3s flannel (conflist "name" field = "cbr0")
+cni:
+  chainingMode: generic-veth
+  chainingTarget: cbr0      # must match the "name" field in 10-flannel.conflist
+  exclusive: false
+  # k3s writes its CNI conf to a non-standard path.
+  # confPath sets the host directory mounted into the Cilium pod as /host/etc/cni/net.d.
+  # Without this, Cilium looks in /etc/cni/net.d and never finds the Flannel conflist.
+  confPath: /var/lib/rancher/k3s/agent/etc/cni/net.d
+  binPath: /var/lib/rancher/k3s/data/cni  # k3s containerd bin_dir — must match config.toml
+
+# Do not replace kube-proxy; k3s embeds its own proxy
+kubeProxyReplacement: false
+
+# Let Flannel own routing end-to-end
+routingMode: native
+enableIPv4Masquerade: false
+
+# Pin all Cilium infrastructure to Linux nodes
+# (Windows workers keep Flannel-only networking)
+nodeSelector:
+  kubernetes.io/os: linux
+
+operator:
+  replicas: 1               # sufficient for a small PoC
+  nodeSelector:
+    kubernetes.io/os: linux
+
+# Hubble observability — the primary value-add of this scenario
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+    nodeSelector:
+      kubernetes.io/os: linux
+  ui:
+    enabled: true
+    nodeSelector:
+      kubernetes.io/os: linux
+
+# Disable XDP acceleration; Hyper-V vNICs do not support native XDP
+nodePort:
+  acceleration: disabled
+
+# Disable host services DSR (incompatible with Hyper-V)
+hostServices:
+  enabled: false
+
+prometheus:
+  enabled: false
+
+# Match k3s pod CIDR from config/variables.ps1
+ipam:
+  mode: kubernetes

@@ -107,21 +107,3 @@ $script:K3sReadyTimeoutSec    = 300   # wait for k3s to report active/Ready
 $script:WinRMTimeoutSec       = 600   # wait for VMBus session after Windows boot
 $script:NodeJoinTimeoutSec    = 300   # wait for node to appear in kubectl get nodes
 $script:NodeReadyTimeoutSec   = 600   # wait for node to transition to Ready
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

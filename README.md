@@ -4,10 +4,11 @@ Automates building a configurable k3s cluster on a single Windows 11 host using 
 
 | Scenario | Script | CNI | Nodes | Verified |
 |----------|--------|-----|-------|---------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 1 Linux + 1 Windows (WS2022) | 18/18 PASS |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel | CP + 1 Linux | 14/14 PASS |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.4 | CP + 1 Linux | 13/13 PASS |
-| D | `Run-ScenarioD.ps1` | Calico v3.29.3 | CP + 1 Linux | 13/13 PASS |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2022) | 18/18 PASS |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel | CP + 2 Linux | 25/25 PASS |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.4 + Hubble | CP + 2 Linux | 27/27 PASS |
+| D | `Run-ScenarioD.ps1` | Calico v3.29.3 | CP + 2 Linux | 13/13 PASS |
+| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2022) | 34/34 PASS |
 
 Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
@@ -33,17 +34,26 @@ Phase 0 automatically installs all remaining tooling (Hyper-V, Packer, kubectl, 
 All scenario scripts handle teardown, config patching, full build, and verification in one command. Run from an **elevated** PowerShell shell:
 
 ```powershell
-# Scenario A: Flannel + CP + 1 Linux worker + 1 Windows worker (WS2022)
+# Scenario A: Flannel + CP + 2 Linux workers + 1 Windows worker (WS2022)
 .\Run-ScenarioA.ps1
 
-# Scenario B: Multus + CP + 1 Linux worker, no Windows
+# Scenario B: Multus + Flannel + CP + 2 Linux workers, no Windows
 .\Run-ScenarioB.ps1
 
-# Scenario C: Cilium + CP + 1 Linux worker, no Windows
+# Scenario C: Cilium + Hubble + CP + 2 Linux workers, no Windows
 .\Run-ScenarioC.ps1
 
-# Scenario D: Calico + CP + 1 Linux worker, no Windows
+# Scenario D: Calico + CP + 2 Linux workers, no Windows
 .\Run-ScenarioD.ps1
+
+# Scenario E: Flannel + chained Cilium + Hubble + CP + 2 Linux workers + 1 Windows worker
+.\Run-ScenarioE.ps1
+
+# Run all 5 scenarios in sequence (with teardown after the last one)
+.\Run-AllScenarios.ps1 -CleanupAfterAll
+
+# Run a subset
+.\Run-AllScenarios.ps1 -Scenarios A,C,E
 ```
 
 Add `-DeleteGoldenImages` to force a full Packer rebuild of base VHDXs (needed when changing k3s version, base OS packages, etc.):
@@ -110,10 +120,11 @@ kubectl get nodes -o wide
 |-----|-------|-------|
 | Flannel | `'flannel'` | Default. Required for Windows workers. k3s embedded, host-gw mode. |
 | Multus | `'multus'` | Meta-CNI on top of Flannel. Linux-only. Adds NetworkAttachmentDefinition CRD. |
-| Cilium | `'cilium'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm. |
+| Cilium | `'cilium'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Hubble relay+UI enabled. Installed via Helm. |
+| Flannel + Cilium | `'flannel+cilium'` | Flannel handles routing (incl. Windows workers); Cilium chained for eBPF observability on Linux nodes. Hubble relay+UI enabled. Installed via Helm post-join. |
 | Calico | `'calico'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm (tigera-operator). |
 
-**Phase ordering note:** For Cilium and Calico, the CNI must be installed *before* workers join (nodes stay `NotReady` without a CNI). `Main.ps1` handles this automatically.
+**Phase ordering note:** For Cilium and Calico, the CNI must be installed *before* workers join (nodes stay `NotReady` without a CNI). For `flannel+cilium`, all nodes join first (Flannel provides routing), then Cilium is chained in post-join. `Main.ps1` handles this ordering automatically for all three.
 
 ---
 
@@ -193,16 +204,19 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 
 ```
 .
-├── Run-ScenarioA.ps1          # End-to-end: Flannel + CP + Linux + Windows worker
-├── Run-ScenarioB.ps1          # End-to-end: Multus + CP + Linux worker
-├── Run-ScenarioC.ps1          # End-to-end: Cilium + CP + Linux worker
-├── Run-ScenarioD.ps1          # End-to-end: Calico + CP + Linux worker
+├── Run-ScenarioA.ps1          # End-to-end: Flannel + CP + 2 Linux workers + Windows worker
+├── Run-ScenarioB.ps1          # End-to-end: Multus + Flannel + CP + 2 Linux workers
+├── Run-ScenarioC.ps1          # End-to-end: Cilium + Hubble + CP + 2 Linux workers
+├── Run-ScenarioD.ps1          # End-to-end: Calico + CP + 2 Linux workers
+├── Run-ScenarioE.ps1          # End-to-end: Flannel + chained Cilium + Hubble + CP + 2 Linux workers + Windows worker
+├── Run-AllScenarios.ps1       # Orchestrates all (or a subset of) scenarios A–E sequentially
 ├── config/
 │   ├── variables.ps1          # Single source of truth: versions, topology, credentials
 │   └── cni/
-│       ├── multus-daemonset.yaml   # Multus v4.3.0 DaemonSet manifest
-│       ├── cilium-values.yaml      # Cilium v1.19.4 Helm values
-│       └── calico-values.yaml      # Calico v3.29.3 tigera-operator Helm values
+│       ├── multus-daemonset.yaml      # Multus v4.3.0 DaemonSet manifest
+│       ├── cilium-values.yaml         # Cilium v1.19.4 Helm values (Hubble enabled)
+│       ├── cilium-chained-values.yaml # Cilium chained-mode values for Scenario E
+│       └── calico-values.yaml         # Calico v3.29.3 tigera-operator Helm values
 ├── docs/
 │   └── architecture.md        # Component layout, networking, build sequence
 ├── output/                    # Generated at runtime
@@ -244,6 +258,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 | Packer build fails (SSH timeout) | Usually a transient cloud-init timing issue; re-run with `-ForcePhase BASE-L`. |
 | Windows VM fails to join | Re-run `.\scripts\Main.ps1 -ForceNode k8s-win-01`; check `C:\k8s-firstboot-log.txt` inside the VM. |
 | Nodes stay `NotReady` (Cilium/Calico) | Phase ordering: CNI must deploy before workers join. This is handled automatically; re-run from phase 7 if disrupted. |
+| Hubble flows not captured | Hubble observe reads the per-node ring buffer; if no traffic has been generated yet, run cross-node tests first. The verification script (`Verify-Cluster.ps1`) generates traffic before querying Hubble. |
 | `kubectl` can't connect / workers `NotReady` after changing networks | Run `.\Update-KubeConfig.ps1` — patches the kubeconfig and restarts `k3s-agent` on all workers with the new CP IP. |
 | `kubectl` can't connect | Verify `$env:KUBECONFIG` points to `output/kubeconfig.yaml`; check `output/linux-vm-ip.txt`. |
 | Wrong NIC for vSwitch | Set `$script:HostNicName` in `config/variables.ps1`. |
