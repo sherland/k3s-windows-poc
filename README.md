@@ -96,6 +96,11 @@ $script:LinuxWorkerCount = 1
 $env:KUBECONFIG = "$PWD\output\kubeconfig.yaml"
 kubectl get nodes -o wide
 ```
+> **Changing networks?** The VMs get their IPs from DHCP, so the control-plane IP in the kubeconfig — and in each worker's k3s-agent config — becomes stale when you move between networks (e.g. home ↔ office). Run `Update-KubeConfig.ps1` to fix both without touching the cluster:
+> ```powershell
+> .\Update-KubeConfig.ps1
+> ```
+> This patches `output/kubeconfig.yaml` **and** SSHes into each Linux worker to update `K3S_URL` and restart `k3s-agent`, so nodes return to `Ready`.
 
 ---
 
@@ -225,6 +230,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 │   ├── win2022-base/          # Golden WS2022 base VHDX (read-only)
 │   └── nodes/                 # Per-node differencing disks
 ├── check-system.ps1           # Pre-flight system checks
+├── Update-KubeConfig.ps1      # Refresh kubeconfig + fix worker k3s-agent after changing networks (home <-> office)
 └── run-elevated.ps1           # Elevation wrapper + log tee
 ```
 
@@ -238,6 +244,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 | Packer build fails (SSH timeout) | Usually a transient cloud-init timing issue; re-run with `-ForcePhase BASE-L`. |
 | Windows VM fails to join | Re-run `.\scripts\Main.ps1 -ForceNode k8s-win-01`; check `C:\k8s-firstboot-log.txt` inside the VM. |
 | Nodes stay `NotReady` (Cilium/Calico) | Phase ordering: CNI must deploy before workers join. This is handled automatically; re-run from phase 7 if disrupted. |
+| `kubectl` can't connect / workers `NotReady` after changing networks | Run `.\Update-KubeConfig.ps1` — patches the kubeconfig and restarts `k3s-agent` on all workers with the new CP IP. |
 | `kubectl` can't connect | Verify `$env:KUBECONFIG` points to `output/kubeconfig.yaml`; check `output/linux-vm-ip.txt`. |
 | Wrong NIC for vSwitch | Set `$script:HostNicName` in `config/variables.ps1`. |
 | SSH key mismatch after rebuild | Delete `output/linux-build-key*` and re-run — `Build-LinuxBase.ps1` regenerates and patches user-data automatically. |

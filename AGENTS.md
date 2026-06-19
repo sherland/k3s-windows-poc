@@ -127,6 +127,7 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `Build-LinuxVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Build-WindowsVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Join-WindowsNode.ps1` | Legacy | Superseded (kept for reference) |
+| `Update-KubeConfig.ps1` | Working | Patches `output/kubeconfig.yaml` with current control-plane VM IP, and updates `K3S_URL` + restarts `k3s-agent` on all Linux workers, after a network change |
 
 ## Packer Templates
 
@@ -150,6 +151,9 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `config/cni/calico-values.yaml` | Calico v3.29.3 tigera-operator Helm values (VXLAN, BGP disabled, pod CIDR 10.42.0.0/16) |
 
 ## Common Tasks
+
+**Refresh kubeconfig after changing networks** (home ↔ office — VM IP changes with DHCP): `.\Update-KubeConfig.ps1`
+This patches `output/kubeconfig.yaml` **and** SSHes into each Linux worker to update `K3S_URL` + restart `k3s-agent`, so nodes return to `Ready`.
 
 **Verify cluster (run tests only)**: `$env:KUBECONFIG="output/kubeconfig.yaml"; kubectl get nodes -o wide`
 
