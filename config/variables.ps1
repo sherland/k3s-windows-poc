@@ -63,12 +63,12 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # -----------------------------------------------------------------------------
 $script:K3sVersion        = 'v1.32.5+k3s1'
 $script:ContainerdVersion = '1.7.32'
-$script:FlannelVersion    = 'v0.25.7'   # Windows flanneld.exe + CNI plugin
-$script:WinsCniVersion    = 'v0.3.0'    # windows-container-networking (win-bridge, win-overlay)
+$script:FlannelVersion    = 'v0.28.5'   # Windows flanneld.exe + CNI plugin
+$script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)
-$script:CniPluginsVersion = 'v1.5.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)
-$script:CiliumVersion     = '1.19.4'    # Cilium CNI (Linux only; latest stable)
-$script:CalicoVersion     = 'v3.29.3'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
+$script:CniPluginsVersion = 'v1.9.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)
+$script:CiliumVersion     = '1.19.5'    # Cilium CNI (Linux only; latest stable)
+$script:CalicoVersion     = 'v3.32.0'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
 $script:PackerWingetId    = 'Hashicorp.Packer'
 $script:KubectlWingetId   = 'Kubernetes.kubectl'
 
