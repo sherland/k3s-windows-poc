@@ -39,6 +39,9 @@ packer/windows/iso/
 # VS Code workspace / launch settings (user-specific, not project config)
 .vscode/
 
+# Visual Studio workspace / launch settings (user-specific, not project config)
+.vs/
+
 # Windows Explorer thumbnail cache and folder layout files
 Thumbs.db
 desktop.ini
