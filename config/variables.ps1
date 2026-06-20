@@ -59,10 +59,12 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # -----------------------------------------------------------------------------
 # Software Versions
 # k3s is pinned — both Linux and Windows binaries must use the same version.
-# containerd is pinned to v1.x — kubelet v1.32 requires CRI v1 gRPC API (removed in v2.x).
+# containerd is pinned to v1.x — kubelet v1.35 requires CRI v1 gRPC API (removed in v2.x).
+# Compatible range: Cilium 1.19 supports k8s 1.32–1.35; Calico 3.32 supports k8s 1.34–1.36.
+# Intersection: k8s 1.34–1.35. k3s v1.35.5+k3s1 (Kubernetes 1.35) is the latest compatible.
 # -----------------------------------------------------------------------------
-$script:K3sVersion        = 'v1.32.5+k3s1'
-$script:ContainerdVersion = '1.7.32'
+$script:K3sVersion        = 'v1.35.5+k3s1'
+$script:ContainerdVersion = '1.7.33'
 $script:FlannelVersion    = 'v0.28.5'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)

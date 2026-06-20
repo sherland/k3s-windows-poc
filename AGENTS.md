@@ -14,7 +14,7 @@ Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built on
 |----------|--------|-----|-------|--------|
 | A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 18/18 PASS |
 | B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | 25/25 PASS |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.4 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 27/27 PASS |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 27/27 PASS |
 | D | `Run-ScenarioD.ps1` | Calico v3.29.3 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 13/13 PASS |
 | E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 34/34 PASS |
 
@@ -129,7 +129,7 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `Remove-Cluster.ps1` | Working | Teardown — iterates all nodes, removes vhdx/nodes/ |
 | `Main.ps1` | Working | 10-phase orchestrator; handles Cilium/Calico/flannel+cilium pre-join phase ordering |
 | `Helpers.ps1` | Working | Get-AllLinuxNodeNames, Get-AllWindowsNodeNames, New-DifferencingNode, New-SeedISO, Send-SshFile, etc. |
-| `Run-AllScenarios.ps1` | Working | Runs all (or a subset of) scenarios A–E end-to-end; accepts `-Scenarios`, `-NoExtraWorker`, `-CleanupAfterAll` |
+| `Run-AllScenarios.ps1` | Working | Runs all (or a subset of) scenarios A–E end-to-end; accepts `-Scenarios`, `-NoExtraWorker`, `-DeleteGoldenImages`, `-CleanupAfterAll` |
 | `Build-LinuxVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Build-WindowsVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Join-WindowsNode.ps1` | Legacy | Superseded (kept for reference) |
@@ -155,8 +155,8 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | File | Purpose |
 |------|---------|
 | `config/cni/multus-daemonset.yaml` | Multus v4.3.0 thick DaemonSet (`ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick`) |
-| `config/cni/cilium-values.yaml` | Cilium v1.19.4 Helm values (native routing, IPAM=kubernetes, k3s CNI paths, **Hubble relay+UI enabled**) |
-| `config/cni/cilium-chained-values.yaml` | Cilium v1.19.4 Helm values for **generic-veth chaining mode** (Scenario E — layered on top of Flannel; Hubble relay+UI enabled, Linux-only nodeSelector) |
+| `config/cni/cilium-values.yaml` | Cilium v1.19.5 Helm values (native routing, IPAM=kubernetes, k3s CNI paths, **Hubble relay+UI enabled**) |
+| `config/cni/cilium-chained-values.yaml` | Cilium v1.19.5 Helm values for **generic-veth chaining mode** (Scenario E — layered on top of Flannel; Hubble relay+UI enabled, Linux-only nodeSelector) |
 | `config/cni/calico-values.yaml` | Calico v3.29.3 tigera-operator Helm values (VXLAN, BGP disabled, pod CIDR 10.42.0.0/16) |
 
 ## Common Tasks
@@ -182,6 +182,9 @@ This patches `output/kubeconfig.yaml` **and** SSHes into each Linux worker to up
 
 **Full rebuild**: `.\scripts\Remove-Cluster.ps1 -All` then `.\run-elevated.ps1`
 
+**Run all scenarios (force Packer rebuild after version bump)**: `.\Run-AllScenarios.ps1 -DeleteGoldenImages`
+Deletes golden base VHDXs before the first scenario so Packer rebuilds them with the updated k3s/containerd versions. Subsequent scenarios reuse the rebuilt images.
+
 **Dry-run delete**: `.\scripts\Remove-Cluster.ps1 -All -WhatIf`
 
 **Scale Linux workers up**: `.\Scale-LinuxWorkers.ps1 -TargetCount 3`
@@ -199,7 +202,7 @@ Runs the full sequence (0→4→3 force→1), asserts 6 invariants per step, the
 - **Rebuild SSH key mismatch**: `-OutputFiles` deletes `output/linux-build-key*`. On the next run a new key pair is generated. `Build-LinuxBase.ps1` detects this and overwrites the old key in `packer/linux/http/user-data` automatically (regex replaces `ssh-ed25519 … packer-linux-build` lines). Keep the `packer-linux-build` comment suffix on key lines so the replacement works.
 - `$script:HostNicName` auto-detects via default route; override in `config/variables.ps1` if the wrong NIC is selected.
 - Windows VM base build takes 15–25 min (feature install requires in-guest reboots during Packer).
-- Containerd is pinned to **v1.7.32** — v2.x breaks the CRI v1 API that kubelet (via k3s) expects.
+- Containerd is pinned to **v1.7.33** (latest 1.7.x) — v2.x breaks the CRI v1 API that kubelet (via k3s) expects on Windows workers.
 - **Cilium, Calico, and flannel+cilium require pre-join or post-join phase ordering**: For `cilium` and `calico`, nodes stay `NotReady` until the CNI is applied — `Main.ps1` runs `Apply-CNI.ps1` *before* `Join-Nodes.ps1`. For `flannel+cilium`, Flannel handles routing so all nodes (including Windows) join first, then Cilium is chained in post-join. `Main.ps1` handles this ordering automatically for all three.
 - **Helm is required** for Cilium, Calico, and flannel+cilium installs. Phase 0 checks for it on PATH. Install: `winget install --id Helm.Helm`.
 - **Hubble observability**: Hubble is enabled in Scenarios C and E (relay + UI deployments in `kube-system`). `Verify-Cluster.ps1` validates Hubble relay/UI readiness and uses `kubectl exec` into a Cilium pod to run `hubble observe` — no host-side tooling is required. The `hubble` binary is baked into the Cilium container image.
