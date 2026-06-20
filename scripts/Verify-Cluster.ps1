@@ -6,7 +6,8 @@
 #   1.  All expected nodes present and Ready
 #   2.  No CrashLoopBackOff pods in kube-system
 #   3.  CoreDNS pods Running
-#   4.  CNI-specific health (multus DaemonSet, NAD CRD)
+#   4.  CNI-specific health (multus DaemonSet, NAD CRD, cni-plugins binary presence,
+#       secondary-network attachment functional test — multus scenarios only)
 #   5.  Deploy a test DaemonSet (alpine, linux nodeSelector)
 #   6.  Wait for all test pods to be Running
 #   7.  Cross-node pod-to-pod ICMP ping (verifies overlay/route connectivity)
@@ -118,6 +119,161 @@ function Test-SystemPods {
 }
 
 # ---------------------------------------------------------------------------
+# 3a. Multus: cni-plugins binary presence + secondary network attachment
+#
+# Background: Multus v4.x thick-plugin silently skips secondary network
+# attachments when the delegated CNI binary (e.g. macvlan) is missing from
+# /opt/cni/bin on the node.  No pod Warning events are emitted and the CNI
+# ADD call succeeds — the pod just has only its primary eth0 interface.
+# This test detects both the missing binary and the silent-failure symptom.
+# See docs/multus-issue.md for the full reproduction + fix steps.
+# ---------------------------------------------------------------------------
+function Test-MultusSecondaryNetworks {
+
+    # --- 3a. Binary presence check via exec into the Multus DaemonSet pod ---
+    # The Multus daemonset mounts /var/lib/rancher/k3s/data/cni → /opt/cni/bin
+    # inside the kube-multus container, so we can inspect the host path through it.
+    Write-Step "  [3a] Checking cni-plugins (macvlan) binary on each node..."
+
+    $multusPodNames = @(Invoke-KubectlRaw @(
+        'get', 'pods', '-n', 'kube-system',
+        '-l', 'app=multus',
+        '-o', 'jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}'
+    ) | Where-Object { $_.Trim() -ne '' })
+
+    if ($multusPodNames.Count -eq 0) {
+        Record-Result $false "Multus pods found for binary check"
+        return
+    }
+
+    $allNodesHaveMacvlan = $true
+    foreach ($mpod in $multusPodNames) {
+        $nodeName = (Invoke-KubectlRaw @(
+            'get', 'pod', $mpod, '-n', 'kube-system',
+            '-o', 'jsonpath={.spec.nodeName}'
+        )) -join ''
+
+        Invoke-KubectlRaw @('exec', '-n', 'kube-system', $mpod, '-c', 'kube-multus', '--',
+            'test', '-f', '/opt/cni/bin/macvlan') | Out-Null
+        $hasMacvlan = ($LASTEXITCODE -eq 0)
+
+        if (-not $hasMacvlan) { $allNodesHaveMacvlan = $false }
+
+        $detail = if ($hasMacvlan) {
+            '/opt/cni/bin/macvlan found'
+        } else {
+            '/opt/cni/bin/macvlan MISSING — install cni-plugins on the node. See docs/multus-issue.md'
+        }
+        Record-Result $hasMacvlan "cni-plugins macvlan binary present on node '$nodeName'" $detail
+    }
+
+    # --- 3b. Functional secondary-network attachment test ---
+    # Creates a test NAD (macvlan on eth0) and a pod with the annotation, then
+    # verifies that the k8s.v1.cni.cncf.io/network-status annotation contains
+    # two entries.  If macvlan is missing, Multus will silently return only eth0.
+    Write-Step "  [3b] Functional secondary-network attachment test (macvlan NAD)..."
+
+    $multusTestNs = 'kube-verify-multus'
+    try {
+        $nsCheck = Invoke-KubectlRaw @('get', 'namespace', $multusTestNs) 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-Kubectl @('create', 'namespace', $multusTestNs)
+        }
+
+        # macvlan with master eth0 creates a virtual interface even on a single-NIC VM.
+        # Using a dedicated /29 subnet (192.168.199.0/29) to avoid collisions.
+        $multusYaml = @"
+apiVersion: k8s.cni.cncf.io/v1
+kind: NetworkAttachmentDefinition
+metadata:
+  name: verify-macvlan
+  namespace: $multusTestNs
+spec:
+  config: |-
+    {
+      "cniVersion": "0.3.0",
+      "type": "macvlan",
+      "master": "eth0",
+      "mode": "bridge",
+      "ipam": { "type": "host-local", "subnet": "192.168.199.0/29" }
+    }
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: verify-multus-secondary
+  namespace: $multusTestNs
+  annotations:
+    k8s.v1.cni.cncf.io/networks: verify-macvlan
+spec:
+  nodeSelector:
+    kubernetes.io/os: linux
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: test
+      image: alpine:3.19
+      command: ["sleep", "3600"]
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "16Mi"
+        limits:
+          cpu: "100m"
+          memory: "32Mi"
+"@
+        $tmpMultus = [System.IO.Path]::GetTempFileName() + '.yaml'
+        Set-Content -Path $tmpMultus -Value $multusYaml -Encoding UTF8
+        try {
+            Invoke-Kubectl @('apply', '-f', $tmpMultus)
+        } finally {
+            Remove-Item $tmpMultus -ErrorAction SilentlyContinue
+        }
+
+        # Wait for pod Running (macvlan attach is synchronous — 60s is generous)
+        $podRunning = Wait-Until -TimeoutSec 60 -PollSec 5 `
+            -Description 'Multus verify pod Running' -NoThrow -Condition {
+                $phase = (Invoke-KubectlRaw @(
+                    'get', 'pod', 'verify-multus-secondary', '-n', $multusTestNs,
+                    '-o', 'jsonpath={.status.phase}'
+                ) 2>$null) -join ''
+                Write-Step "    pod phase: $phase"
+                return ($phase -eq 'Running')
+            }
+
+        Record-Result $podRunning "Multus verify pod reached Running state"
+
+        if ($podRunning) {
+            $rawStatus = (Invoke-KubectlRaw @(
+                'get', 'pod', 'verify-multus-secondary', '-n', $multusTestNs,
+                '-o', 'jsonpath={.metadata.annotations.k8s\.v1\.cni\.cncf\.io/network-status}'
+            ) 2>$null) -join ''
+
+            $ifaceCount  = 0
+            $hasSecondary = $false
+            if ($rawStatus -and $rawStatus.Trim() -ne '') {
+                try {
+                    $parsed    = $rawStatus | ConvertFrom-Json
+                    $ifaceCount = @($parsed).Count
+                    $hasSecondary = ($ifaceCount -ge 2)
+                } catch { }
+            }
+
+            $detail = if ($hasSecondary) {
+                "interfaces=$ifaceCount (eth0 + secondary via macvlan)"
+            } else {
+                "interfaces=$ifaceCount only — secondary attachment was silently skipped. " +
+                "macvlan binary likely missing. See docs/multus-issue.md"
+            }
+            Record-Result $hasSecondary `
+                "Multus secondary interface attached (network-status ≥2 entries)" $detail
+        }
+    } finally {
+        Invoke-KubectlRaw @('delete', 'namespace', $multusTestNs,
+            '--ignore-not-found', '--timeout=30s') | Out-Null
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 3. CNI-specific checks
 # ---------------------------------------------------------------------------
 function Test-CNIHealth {
@@ -134,6 +290,10 @@ function Test-CNIHealth {
 
             $nadCrd = Invoke-KubectlRaw @('get', 'crd', 'network-attachment-definitions.k8s.cni.cncf.io')
             Record-Result ($LASTEXITCODE -eq 0) "NetworkAttachmentDefinition CRD registered"
+
+            # Verify cni-plugins binaries are installed and secondary-network attachment works.
+            # Multus v4.x silently drops secondary interfaces when the delegated binary is missing.
+            Test-MultusSecondaryNetworks
         }
         'cilium' {
             $cilPods = @(Invoke-KubectlRaw @('get', 'pods', '-n', 'kube-system', '-l', 'k8s-app=cilium',

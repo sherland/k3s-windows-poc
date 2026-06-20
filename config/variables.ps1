@@ -34,7 +34,7 @@ $script:ExtraLinuxWorkerRAM  = 2048          # MB — additional workers (k8s-ln
 # Set to @() for zero Windows nodes.
 # -----------------------------------------------------------------------------
 $script:WindowsWorkerPrefix = 'k8s-win'     # → k8s-win-01, k8s-win-02 (≤10 chars so result stays ≤15)
-$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario C
+$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario B
 
 # -----------------------------------------------------------------------------
 # VM Disk
@@ -44,7 +44,7 @@ $script:DiskSizeGB = 60   # applied to all VMs
 # -----------------------------------------------------------------------------
 # CNI
 # -----------------------------------------------------------------------------
-$script:CNIPlugin      = 'cilium'    # 'flannel' (embedded, default) | 'cilium' | 'multus'
+$script:CNIPlugin      = 'multus'    # 'flannel' (embedded, default) | 'cilium' | 'multus'
 $script:FlannelBackend = 'host-gw'   # 'host-gw' (L2, required for Windows on same vSwitch) | 'vxlan'
 
 # -----------------------------------------------------------------------------
@@ -66,6 +66,7 @@ $script:ContainerdVersion = '1.7.32'
 $script:FlannelVersion    = 'v0.25.7'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.0'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)
+$script:CniPluginsVersion = 'v1.5.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)
 $script:CiliumVersion     = '1.19.4'    # Cilium CNI (Linux only; latest stable)
 $script:CalicoVersion     = 'v3.29.3'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
 $script:PackerWingetId    = 'Hashicorp.Packer'
