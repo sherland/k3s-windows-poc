@@ -35,6 +35,7 @@ Use `Run-AllScenarios.ps1` to run all five scenarios in sequence.
 | [`scripts/Remove-Cluster.ps1`](scripts/Remove-Cluster.ps1) | Teardown. Flags: `-All`, `-VMs`, `-Network`, `-OutputFiles`, `-Downloads`, `-KeepBaseImages`, `-Force`, `-WhatIf`. |
 | [`config/variables.ps1`](config/variables.ps1) | **Single source of truth** for credentials, VM sizing, versions, node topology, CNI plugin. |
 | [`check-system.ps1`](check-system.ps1) | Pre-flight check (admin, disk, Hyper-V, tools on PATH). |
+| [`Scale-LinuxWorkers.ps1`](Scale-LinuxWorkers.ps1) | Scale Linux workers up/down post-cluster. Accepts `-TargetCount N`, `-DrainTimeoutSec`, `-NodeDeleteTimeoutSec`, `-WhatIf`. |
 
 ## Conventions
 
@@ -133,6 +134,8 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `Build-WindowsVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Join-WindowsNode.ps1` | Legacy | Superseded (kept for reference) |
 | `Update-KubeConfig.ps1` | Working | Patches `output/kubeconfig.yaml` with current control-plane VM IP, and updates `K3S_URL` + restarts `k3s-agent` on all Linux workers, after a network change |
+| `Scale-LinuxWorkers.ps1` | Working | Post-cluster scaling — scale-up creates new VMs + joins them; scale-down drains, deletes node object, stops k3s-agent, removes VM + VHDX + seed ISO + sentinels; patches `$script:LinuxWorkerCount` in `config/variables.ps1` after each node |
+| `Test-ScaleLinuxWorkers.ps1` | Working | End-to-end test for `Scale-LinuxWorkers.ps1` — runs fixed sequence (0→4→3→1), asserts 6 invariants per step (kubectl nodes, Hyper-V VMs, variables.ps1, sentinels, VHDXs, seed ISOs), restores original count after run |
 
 ## Packer Templates
 
@@ -180,6 +183,15 @@ This patches `output/kubeconfig.yaml` **and** SSHes into each Linux worker to up
 **Full rebuild**: `.\scripts\Remove-Cluster.ps1 -All` then `.\run-elevated.ps1`
 
 **Dry-run delete**: `.\scripts\Remove-Cluster.ps1 -All -WhatIf`
+
+**Scale Linux workers up**: `.\Scale-LinuxWorkers.ps1 -TargetCount 3`
+Adds nodes starting from the next index; creates VMs + joins them. Patches `$script:LinuxWorkerCount` in `config/variables.ps1`.
+
+**Scale Linux workers down**: `.\Scale-LinuxWorkers.ps1 -TargetCount 1`
+Removes nodes from the highest index first; drains workloads, deletes the node object, stops k3s-agent, removes VM + VHDX + seed ISO, clears sentinels. Patches `config/variables.ps1` after each node. Use `-DrainTimeoutSec 0` to force-drain (skips PDB checks). Use `-WhatIf` to preview.
+
+**Test scaling end-to-end**: `.\Test-ScaleLinuxWorkers.ps1`
+Runs the full sequence (0→4→3 force→1), asserts 6 invariants per step, then restores the original worker count. Use `-SkipRestore` to leave at count=1.
 
 ## Pitfalls
 

@@ -207,6 +207,11 @@ Set-VMFirmware -VMName $NodeName -EnableSecureBoot Off
 
 The VM is then given a cloud-init seed ISO (Linux) or left for offline config injection (Windows).
 
+> **Post-cluster scaling:** `Scale-LinuxWorkers.ps1` (repo root) reuses this exact mechanism
+> out-of-band to add or remove Linux workers after a cluster is already running. Scale-up
+> calls `New-LinuxNodes.ps1` and `Join-Nodes.ps1` directly (existing nodes are skipped via
+> sentinels). Scale-down performs a graceful Kubernetes drain before tearing down the VM.
+
 ---
 
 ## 4. How Node Identities Are Injected
@@ -862,6 +867,11 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 
 All phases are **idempotent** via sentinel files in `output/sentinels/`. Delete a sentinel
 or pass `-ForcePhase N` to `Main.ps1` to re-run a phase.
+
+> **Out-of-band scaling:** `Scale-LinuxWorkers.ps1` is a post-cluster utility that runs
+> Phases 4 and 7 for new nodes only (scale-up), or performs a graceful drain + teardown
+> sequence for removed nodes (scale-down). It is not invoked by `Main.ps1` and operates
+> independently of the phase map.
 
 ---
 

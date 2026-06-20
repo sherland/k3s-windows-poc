@@ -149,6 +149,28 @@ kubectl get nodes -o wide
 
 ---
 
+## Scaling Linux Workers
+
+Once a cluster is running you can add or remove Linux workers without touching the rest of the cluster. `variables.ps1` is updated automatically after each operation.
+
+```powershell
+# Scale up to 3 workers (creates k8s-lnx-03, joins it)
+.\Scale-LinuxWorkers.ps1 -TargetCount 3
+
+# Scale down to 1 worker (drains k8s-lnx-02 first, then removes it)
+.\Scale-LinuxWorkers.ps1 -TargetCount 1
+
+# Force-drain (skip PDB checks — removes pods immediately)
+.\Scale-LinuxWorkers.ps1 -TargetCount 1 -DrainTimeoutSec 0
+
+# Preview what would happen without making any changes
+.\Scale-LinuxWorkers.ps1 -TargetCount 1 -WhatIf
+```
+
+Scale-down sequence per node: `kubectl cordon` → `kubectl drain` → `kubectl delete node` → stop k3s-agent via SSH → remove Hyper-V VM + VHDX + seed ISO → clear sentinels → update `variables.ps1`.
+
+---
+
 ## Deleting the Cluster
 
 ```powershell
@@ -244,6 +266,8 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 │   ├── win2022-base/          # Golden WS2022 base VHDX (read-only)
 │   └── nodes/                 # Per-node differencing disks
 ├── check-system.ps1           # Pre-flight system checks
+├── Scale-LinuxWorkers.ps1     # Scale Linux workers up/down post-cluster (drain → delete → remove VM)
+├── Test-ScaleLinuxWorkers.ps1 # End-to-end test for Scale-LinuxWorkers.ps1 (0→4→3→1 + 6 invariants per step)
 ├── Update-KubeConfig.ps1      # Refresh kubeconfig + fix worker k3s-agent after changing networks (home <-> office)
 └── run-elevated.ps1           # Elevation wrapper + log tee
 ```
