@@ -29,8 +29,8 @@ Windows 11 Host (Hyper-V)
 │
 ├── Golden base VHDXs (read-only after Packer build)
 │   ├── vhdx/linux-base/                — Ubuntu 24.04 LTS + k3s binary
-│   ├── vhdx/win2022-base/              — WS2022 + containerd v1.7.32 + kubelet
-│   └── vhdx/win2025-base/              — WS2025 + containerd v1.7.32 + kubelet
+│   ├── vhdx/win2022-base/              — WS2022 + containerd v1.7.33 + kubelet
+│   └── vhdx/win2025-base/              — WS2025 + containerd v1.7.33 + kubelet
 │
 └── Node VMs (child differencing disks — vhdx/nodes/)
     ├── k8s-cp-01    (Linux control plane — k3s server)
@@ -153,15 +153,15 @@ is injected as a virtual floppy. WinRM is enabled inside `winrm-setup.ps1` (runs
 
 | Script | What it does |
 |--------|-------------|
-| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v1.7.32, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
+| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v1.7.33, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
 | `packer/windows/scripts/05-firstboot-setup.ps1` | Writes `C:\k8s-firstboot.ps1` — a PowerShell script that reads `C:\k8s-node-config.json` (injected offline by `Join-Nodes.ps1`), writes actual kubeconfigs and `C:\k\cni\config\cni.conf`, renames the computer, and registers `kubelet` + `kube-proxy` as Windows services. Also creates a `k8s-firstboot` scheduled task (SYSTEM, AtStartup, Trigger=Boot) that runs `k8s-firstboot.ps1` once, logs to `C:\k8s-firstboot-log.txt`, then deletes itself. |
 
 After provisioning, Packer shuts down and the VHDX lands in `vhdx/win2022-base/` or
 `vhdx/win2025-base/`.
 
-> **containerd v1.7.32 pin:** v2.x removed the CRI v1 gRPC API (`runtime.v1.RuntimeService`)
-> that kubelet v1.32 expects. v1.7.32 is the latest v1.x release and is explicitly set in
-> `config/variables.ps1` as `$script:ContainerdVersion = '1.7.32'`.
+> **containerd v1.7.33 pin:** v2.x removed the CRI v1 gRPC API (`runtime.v1.RuntimeService`)
+> that kubelet v1.35 expects. v1.7.33 is the latest v1.x release and is explicitly set in
+> `config/variables.ps1` as `$script:ContainerdVersion = '1.7.33'`.
 
 ---
 
@@ -320,14 +320,14 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ## 6. Scenario Comparison — A, B, C, D, E
 
-All scenarios use k3s v1.32.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
+All scenarios use k3s v1.35.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
 
 ---
 
 ### Scenario A — Flannel (embedded) + Windows worker
 
-**Script:** `Run-ScenarioA.ps1` | **Verified:** 18/18 PASS
+**Script:** `Run-ScenarioA.ps1` | **Verified:** PASS (04:38)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
 
@@ -364,9 +364,9 @@ development or CI environments where policy enforcement is not required.
 
 ---
 
-### Scenario B — Multus (meta-CNI on top of Flannel)
+### Scenario B — Multus (meta-CNI on top of Flannel) + macvlan secondary interfaces
 
-**Script:** `Run-ScenarioB.ps1` | **Verified:** 25/25 PASS
+**Script:** `Run-ScenarioB.ps1` | **Verified:** 28/28 PASS
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -377,21 +377,38 @@ it calls the default CNI (Flannel) to set up the primary pod interface (`eth0`),
 and can additionally call secondary CNI plugins to attach extra interfaces (`net1`, `net2`, …).
 Secondary interfaces are defined via `NetworkAttachmentDefinition` (NAD) custom resources.
 
+This scenario uses **macvlan** as the secondary CNI plugin. Macvlan creates a virtual network
+interface with its own unique MAC address, derived from the host's physical NIC. The pod's
+`net1` interface has a distinct MAC and IP, and is directly visible on the same L2 broadcast
+domain as the host — no NAT, no overlay. This is a common pattern for:
+- Separating management traffic (`eth0` via Flannel) from data-plane traffic (`net1` via macvlan)
+- Providing pods with L2-level access to an existing VLAN
+- Telco/NFV workloads that require direct L2 adjacency
+
 ```yaml
-# Example NAD for a secondary macvlan interface
+# NAD deployed by Verify-Cluster.ps1 for functional testing
 apiVersion: k8s.cni.cncf.io/v1
 kind: NetworkAttachmentDefinition
 metadata:
-  name: macvlan-conf
+  name: verify-macvlan
 spec:
-  config: '{ "type": "macvlan", "master": "eth0", "mode": "bridge", "ipam": {...} }'
+  config: '{ "type": "macvlan", "master": "eth0", "mode": "bridge",
+             "ipam": { "type": "static", "addresses": [{"address": "192.168.200.10/24"}] } }'
 ```
 
 Pods opt in by adding an annotation:
 ```yaml
 annotations:
-  k8s.v1.cni.cncf.io/networks: macvlan-conf
+  k8s.v1.cni.cncf.io/networks: verify-macvlan
 ```
+
+**cni-plugins installation (Phase 8):** k3s only bundles its own CNI binaries (`flannel`,
+`bridge`, `host-local`, etc.). The `macvlan` binary comes from the separate
+[`containernetworking/plugins`](https://github.com/containernetworking/plugins) package.
+`Apply-CNI.ps1` installs this package on every Linux node into
+`/var/lib/rancher/k3s/data/cni/` (the host path that Multus mounts as `/opt/cni/bin`)
+after the Multus DaemonSet is Ready. **Without this step, Multus silently skips secondary
+interface attachment with no error events** — pods run with only `eth0`.
 
 Multus is installed via `config/cni/multus-daemonset.yaml` (thick plugin image).
 
@@ -416,7 +433,7 @@ that need pod network isolation at the L2/VLAN level without replacing the prima
 
 ### Scenario C — Cilium (full CNI replacement) + Hubble
 
-**Script:** `Run-ScenarioC.ps1` | **Verified:** 27/27 PASS
+**Script:** `Run-ScenarioC.ps1` | **Verified:** 28/28 PASS (06:39)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -429,7 +446,7 @@ Cilium completely replaces Flannel. k3s is started with:
 This tells k3s not to start its embedded flannel process and not to deploy its built-in
 network policy controller (Cilium provides its own).
 
-Cilium is installed via Helm (`cilium/cilium` chart v1.19.4) before workers join
+Cilium is installed via Helm (`cilium/cilium` chart v1.19.5) before workers join
 (pre-join phase ordering, §10). It uses eBPF programs loaded into the Linux kernel
 to implement routing, load balancing, and network policy — entirely in kernel space,
 without iptables chains.
@@ -487,7 +504,7 @@ where Flannel's limitations are a bottleneck.
 
 ### Scenario D — Calico (full CNI replacement via tigera-operator)
 
-**Script:** `Run-ScenarioD.ps1` | **Verified:** 13/13 PASS
+**Script:** `Run-ScenarioD.ps1` | **Verified:** 28/28 PASS (05:12)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -547,7 +564,7 @@ lifecycle; workloads that need GlobalNetworkPolicy or HostEndpoint policy.
 
 ### Scenario E — Flannel + Chained Cilium (eBPF observability) + Windows worker
 
-**Script:** `Run-ScenarioE.ps1` | **Verified:** 34/34 PASS
+**Script:** `Run-ScenarioE.ps1` | **Verified:** 38/38 PASS (06:35)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
 
@@ -806,8 +823,8 @@ manages Felix configuration via the `FelixConfiguration` CR.
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| k3s | v1.32.5+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
-| containerd | 2.0.5-k3s1.32 | Bundled with k3s; manages Linux pod containers |
+| k3s | v1.35.5+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
+| containerd | bundled with k3s | Bundled with k3s; manages Linux pod containers |
 | Flannel | embedded | host-gw (Scenarios A, B); disabled for C, D |
 | CoreDNS | embedded | ClusterIP `10.43.0.10` |
 | local-path-provisioner | embedded | Default StorageClass |
@@ -827,17 +844,17 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 
 | Binary | Version | Role |
 |--------|---------|------|
-| `kubelet.exe` | v1.32.5 | Node agent; registers with k3s API server |
-| `kube-proxy.exe` | v1.32.5 | kernelspace mode; programs HNS rules |
-| `kubectl.exe` | v1.32.5 | Used by `start-network.ps1` to query pod CIDR |
-| `containerd.exe` | **v1.7.32** (pinned) | Container runtime |
+| `kubelet.exe` | v1.35.5 | Node agent; registers with k3s API server |
+| `kube-proxy.exe` | v1.35.5 | kernelspace mode; programs HNS rules |
+| `kubectl.exe` | v1.35.5 | Used by `start-network.ps1` to query pod CIDR |
+| `containerd.exe` | **v1.7.33** (pinned) | Container runtime |
 
 #### CNI plugins (`C:\k\cni\`)
 
 | Plugin | Source | Role |
 |--------|--------|------|
-| `flannel.exe` | flannel v0.25.7 | CNI broker; reads flannel net-conf, delegates to win-bridge |
-| `win-bridge.exe` | ms/windows-container-networking v0.3.0 | Creates HNS L2Bridge endpoints |
+| `flannel.exe` | flannel v0.28.5 | CNI broker; reads flannel net-conf, delegates to win-bridge |
+| `win-bridge.exe` | ms/windows-container-networking v0.3.3 | Creates HNS L2Bridge endpoints |
 | `host-local.exe` | containernetworking/plugins | IPAM — allocates pod IPs from node CIDR |
 | `hns.psm1` | microsoft/SDN | PowerShell HNS helper module |
 

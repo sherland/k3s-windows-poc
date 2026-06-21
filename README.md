@@ -4,11 +4,11 @@ Automates building a configurable k3s cluster on a single Windows 11 host using 
 
 | Scenario | Script | CNI | Nodes | Verified |
 |----------|--------|-----|-------|---------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2022) | 18/18 PASS |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel | CP + 2 Linux | 25/25 PASS |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.4 + Hubble | CP + 2 Linux | 27/27 PASS |
-| D | `Run-ScenarioD.ps1` | Calico v3.29.3 | CP + 2 Linux | 13/13 PASS |
-| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2022) | 34/34 PASS |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2022) | PASS (04:38) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel + macvlan | CP + 2 Linux | PASS (04:22) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble | CP + 2 Linux | 28/28 PASS (06:39) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.0 | CP + 2 Linux | 28/28 PASS (05:12) |
+| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2022) | 38/38 PASS (06:35) |
 
 Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
@@ -119,7 +119,7 @@ kubectl get nodes -o wide
 | CNI | Value | Notes |
 |-----|-------|-------|
 | Flannel | `'flannel'` | Default. Required for Windows workers. k3s embedded, host-gw mode. |
-| Multus | `'multus'` | Meta-CNI on top of Flannel. Linux-only. Adds NetworkAttachmentDefinition CRD. |
+| Multus | `'multus'` | Meta-CNI on top of Flannel. Linux-only. Adds NetworkAttachmentDefinition (NAD) CRD. Enables multi-homed pods via secondary interfaces. Phase 8 installs `containernetworking/plugins` (macvlan, ipvlan, etc.) on every node alongside the Multus DaemonSet — these binaries are required for secondary CNI delegation and are not bundled with k3s. Scenario B tests macvlan: pods get a second interface (`net1`) with its own MAC address, directly visible on the L2 segment. |
 | Cilium | `'cilium'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Hubble relay+UI enabled. Installed via Helm. |
 | Flannel + Cilium | `'flannel+cilium'` | Flannel handles routing (incl. Windows workers); Cilium chained for eBPF observability on Linux nodes. Hubble relay+UI enabled. Installed via Helm post-join. |
 | Calico | `'calico'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm (tigera-operator). |
