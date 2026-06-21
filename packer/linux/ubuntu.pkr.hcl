@@ -123,9 +123,11 @@ build {
   }
 
   # --- 2: Install k3s binary only (no server/agent config, no systemd unit) ---
+  # NOTE: execute_command MUST include `env {{.Vars}}` so that Packer's
+  # environment_vars reach the script. Plain `sudo -S bash` drops env vars.
   provisioner "shell" {
     script           = "scripts/02-install-k3s-binary.sh"
-    execute_command  = "echo '${var.admin_pass}' | sudo -S bash {{.Path}}"
+    execute_command  = "echo '${var.admin_pass}' | sudo -S env {{.Vars}} bash {{.Path}}"
     environment_vars = [
       "K3S_VERSION=${var.k3s_version}"
     ]

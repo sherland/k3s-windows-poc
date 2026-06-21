@@ -146,6 +146,8 @@ if (-not (Test-Path $HostLocalPath)) {
 # ---------------------------------------------------------------------------
 # Write KubeletConfiguration (cluster-level; node-level settings added at first boot)
 # ---------------------------------------------------------------------------
+# Note: podInfraContainerImage moved from --pod-infra-container-image CLI flag
+# (removed in k8s 1.31) to KubeletConfiguration in k8s 1.27+.
 @"
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
@@ -155,6 +157,7 @@ clusterDomain: "cluster.local"
 resolvConf: ""
 containerRuntimeEndpoint: "npipe:////./pipe/containerd-containerd"
 registerNode: true
+podInfraContainerImage: "mcr.microsoft.com/oss/kubernetes/pause:3.9"
 "@ | Set-Content -Path "$KDir\kubelet-config.yaml" -Encoding ascii
 Write-Log "04-install-k8s-binaries: kubelet-config.yaml written"
 

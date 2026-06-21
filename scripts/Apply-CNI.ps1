@@ -169,6 +169,50 @@ function Invoke-ApplyCNI {
                 Assert-True ($LASTEXITCODE -eq 0) "NetworkAttachmentDefinition CRD not found after multus deploy"
                 Write-Success "NetworkAttachmentDefinition CRD registered"
             }
+
+            # Install containernetworking/plugins (macvlan, ipvlan, etc.) on every Linux node.
+            # k3s ships only its own bundled CNI binaries; Multus v4.x silently drops secondary
+            # interface attachments when the delegated binary (e.g. macvlan) is absent — no pod
+            # Warning is emitted.  Binaries go to /var/lib/rancher/k3s/data/cni/ which is the
+            # host path that the Multus DaemonSet mounts at /opt/cni/bin inside its container.
+            $allLinuxNodes = Get-AllLinuxNodeNames
+            Write-Step "Installing cni-plugins $($script:CniPluginsVersion) on $($allLinuxNodes.Count) Linux node(s)..."
+
+            # Build the install script with LF-only line endings and write it to a temp file.
+            # Using WriteAllText+ASCII avoids the CRLF that PowerShell here-strings emit on Windows,
+            # which corrupts bash heredoc/script execution via SSH.
+            $scriptLines = @(
+                'set -e',
+                "CNI_VER='$($script:CniPluginsVersion)'",
+                "ARCH=`$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')",
+                "CNI_BIN_DIR='/var/lib/rancher/k3s/data/cni'",
+                'TMP=$(mktemp -d)',
+                'curl -fsSL "https://github.com/containernetworking/plugins/releases/download/${CNI_VER}/cni-plugins-linux-${ARCH}-${CNI_VER}.tgz" -o "${TMP}/cni-plugins.tgz"',
+                'sudo tar -xz -C "${CNI_BIN_DIR}" -f "${TMP}/cni-plugins.tgz"',
+                'rm -rf "${TMP}"',
+                'ls "${CNI_BIN_DIR}/macvlan" > /dev/null',
+                'echo "cni-plugins ${CNI_VER} installed OK (macvlan present)"'
+            )
+            $tmpScript = Join-Path $env:TEMP 'install-cni-plugins.sh'
+            [System.IO.File]::WriteAllText(
+                $tmpScript,
+                ($scriptLines -join "`n") + "`n",
+                [System.Text.Encoding]::ASCII
+            )
+
+            foreach ($nodeName in $allLinuxNodes) {
+                Invoke-Step "Install cni-plugins on '$nodeName'" {
+                    $nodeIp = Get-VMIPAddress -VMName $nodeName
+                    scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null `
+                        -i $script:SshKeyPath $tmpScript `
+                        "$($script:LinuxAdminUser)@${nodeIp}:/tmp/install-cni-plugins.sh" | Out-Null
+                    if ($LASTEXITCODE -ne 0) { throw "SCP of cni-plugins install script to '$nodeName' failed" }
+                    Invoke-SshCommand -HostIp $nodeIp -User $script:LinuxAdminUser `
+                        -KeyPath $script:SshKeyPath -Command 'bash /tmp/install-cni-plugins.sh'
+                }
+            }
+            Remove-Item $tmpScript -ErrorAction SilentlyContinue
+            Write-Success "cni-plugins $($script:CniPluginsVersion) installed on all Linux nodes"
         }
 
         'none' {
@@ -190,14 +234,51 @@ function Invoke-ApplyCNI {
             $valuesFile = Join-Path $script:RepoRoot 'config\cni\calico-values.yaml'
             Assert-True (Test-Path $valuesFile) "Calico values file not found at '$valuesFile'"
 
-            Invoke-Step 'Helm install Calico (tigera-operator)' {
+            # --- Step 1: Install the operator only (CRs disabled) ---
+            # The tigera-operator chart installs both the operator deployment AND Custom
+            # Resources (Installation, APIServer, Goldmane, Whisker) in a single release.
+            # Helm validates all resources against the API server schema BEFORE applying
+            # them, so it fails with "no matches for kind X" because the CRDs don't exist
+            # yet — they are registered by the operator itself on first run.
+            #
+            # Fix: two-phase install.
+            #   Phase 1 — install the operator deployment only (all CRs disabled via --set).
+            #              The operator starts and registers the CRDs.
+            #   Phase 2 — helm upgrade with the full values file, which creates the CRs now
+            #              that the API server knows the kinds.
+            Invoke-Step 'Helm install tigera-operator (operator only, CRs disabled)' {
                 helm upgrade --install calico projectcalico/tigera-operator `
                     --namespace tigera-operator `
                     --create-namespace `
                     --version $script:CalicoVersion `
+                    --set 'installation.enabled=false' `
+                    --set 'apiServer.enabled=false' `
+                    --set 'goldmane.enabled=false' `
+                    --set 'whisker.enabled=false' `
+                    --wait --timeout 5m
+                if ($LASTEXITCODE -ne 0) { throw "helm install tigera-operator (phase 1) failed (exit $LASTEXITCODE)" }
+            }
+
+            # Wait for the operator pod to be Running (it registers the CRDs when it starts)
+            # Note: helm --wait above already ensures the deployment is ready. We just need
+            # a brief pause so the CRDs are fully propagated to all API server endpoints.
+            Wait-Until -TimeoutSec 120 -PollSec 10 -Description 'tigera-operator pod Running' -Condition {
+                $pods = kubectl get pods -n tigera-operator -l 'k8s-app=tigera-operator' --no-headers 2>$null
+                $running = @($pods | Where-Object { $_ -match '\bRunning\b' }).Count
+                Write-Step "  tigera-operator pods Running: $running"
+                return ($running -gt 0)
+            }
+            Write-Step "Waiting 15s for CRDs to fully register in API server..."
+            Start-Sleep -Seconds 15
+
+            # --- Step 2: Upgrade with full values (creates CRs now that CRDs are registered) ---
+            Invoke-Step 'Helm upgrade Calico (enable CRs — Installation, APIServer, Goldmane, Whisker)' {
+                helm upgrade --install calico projectcalico/tigera-operator `
+                    --namespace tigera-operator `
+                    --version $script:CalicoVersion `
                     -f $valuesFile `
                     --wait --timeout 10m
-                if ($LASTEXITCODE -ne 0) { throw "helm install calico failed (exit $LASTEXITCODE)" }
+                if ($LASTEXITCODE -ne 0) { throw "helm upgrade calico (phase 2) failed (exit $LASTEXITCODE)" }
             }
 
             # Wait for calico-node pods to be Running

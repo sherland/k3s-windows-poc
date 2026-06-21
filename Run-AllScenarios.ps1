@@ -25,6 +25,11 @@ param(
     # Pass -NoExtraWorker to each scenario (use 1 Linux worker instead of 2)
     [switch]$NoExtraWorker,
 
+    # Delete golden base VHDXs before the FIRST scenario so Packer rebuilds them.
+    # Required after a k3s/containerd version bump. Subsequent scenarios reuse
+    # the newly-built golden images (no redundant Packer rebuilds).
+    [switch]$DeleteGoldenImages,
+
     # After the final scenario, tear down all VMs (preserves base images + ISOs)
     [switch]$CleanupAfterAll
 )
@@ -69,12 +74,15 @@ foreach ($s in $Scenarios) {
 
 $Results = [System.Collections.Generic.List[pscustomobject]]::new()
 
-Write-Banner ("Run-AllScenarios  [{0}]  NoExtraWorker={1}  CleanupAfterAll={2}" -f
-    ($Scenarios -join ','), $NoExtraWorker.IsPresent, $CleanupAfterAll.IsPresent)
+Write-Banner ("Run-AllScenarios  [{0}]  NoExtraWorker={1}  DeleteGoldenImages={2}  CleanupAfterAll={3}" -f
+    ($Scenarios -join ','), $NoExtraWorker.IsPresent, $DeleteGoldenImages.IsPresent, $CleanupAfterAll.IsPresent)
 
 Write-Host "  Scenarios     : $($Scenarios -join ', ')" -ForegroundColor White
 Write-Host "  Preserve      : ISOs, packer_cache, golden base VHDXs" -ForegroundColor White
 Write-Host "  Cleanup mode  : each scenario tears down the previous cluster" -ForegroundColor White
+if ($DeleteGoldenImages) {
+    Write-Host "  Golden images : will be DELETED and rebuilt by Packer on first scenario" -ForegroundColor Yellow
+}
 if ($CleanupAfterAll) {
     Write-Host "  Post-run      : cluster will be removed after last scenario" -ForegroundColor White
 }
@@ -94,10 +102,12 @@ for ($i = 0; $i -lt $Scenarios.Count; $i++) {
 
     Write-Banner "SCENARIO $label  ($($i+1) of $($Scenarios.Count))" 'Cyan'
 
-    # Build arg list — never pass -DeleteGoldenImages, never pass -SkipCleanup
-    # (each scenario cleans up the previous cluster at its own start).
+    # Build arg list. -DeleteGoldenImages is passed only to the first scenario so
+    # Packer rebuilds the base VHDXs once; subsequent scenarios reuse them.
+    # -SkipCleanup is never passed (each scenario cleans up the previous cluster).
     $scenarioArgs = @()
     if ($NoExtraWorker) { $scenarioArgs += '-NoExtraWorker' }
+    if ($DeleteGoldenImages -and ($i -eq 0)) { $scenarioArgs += '-DeleteGoldenImages' }
 
     $start = [datetime]::Now
     $exitCode = 0

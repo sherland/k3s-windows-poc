@@ -117,6 +117,9 @@ if ($existing) {
     $null = sc.exe delete $kubeletSvc; Start-Sleep -Seconds 2
 }
 
+# NOTE: --cloud-provider was removed in k8s 1.33 (KEP-2395 cloud-provider extraction).
+# NOTE: --pod-infra-container-image was removed in k8s 1.31; use KubeletConfiguration.podInfraContainerImage instead.
+# Both flags cause kubelet v1.33+ to exit immediately with 'unknown flag'.
 $kubeletBin = "`"$KubeletPath`" " +
     "--v=2 --windows-service " +
     "--hostname-override=$Hostname " +
@@ -125,10 +128,8 @@ $kubeletBin = "`"$KubeletPath`" " +
     "--config=`"$KDir\kubelet-config.yaml`" " +
     "--root-dir=C:\var\lib\kubelet " +
     "--cert-dir=`"$PkiDir`" " +
-    "--pod-infra-container-image=mcr.microsoft.com/oss/kubernetes/pause:3.9 " +
     "--register-with-taints=os=windows:NoSchedule " +
-    "--node-labels=kubernetes.io/os=windows " +
-    "--cloud-provider=`"`""
+    "--node-labels=kubernetes.io/os=windows"
 
 $null = New-Service -Name $kubeletSvc `
     -BinaryPathName $kubeletBin `
