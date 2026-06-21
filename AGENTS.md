@@ -12,11 +12,11 @@ Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built on
 
 | Scenario | Script | CNI | Nodes | Result |
 |----------|--------|-----|-------|--------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 18/18 PASS |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | 25/25 PASS |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 27/27 PASS |
-| D | `Run-ScenarioD.ps1` | Calico v3.29.3 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 13/13 PASS |
-| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 34/34 PASS |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | PASS (04:38) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | PASS (04:22) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (06:39) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.0 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (05:12) |
+| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 38/38 PASS (06:35) |
 
 Each scenario script: patches `config/variables.ps1`, tears down any existing cluster (keeping ISOs/cache by default), then runs all phases 0–10 end-to-end.
 All scenarios default to **2 Linux workers** (`lnx-01` + `lnx-02`). Pass `-NoExtraWorker` to each script to use only 1.
@@ -210,6 +210,9 @@ Runs the full sequence (0→4→3 force→1), asserts 6 invariants per step, the
 - **oscdimg.exe** is required for Linux cloud-init seed ISOs. Phase 0 installs Windows ADK via winget if missing.
 - Base VHDXs must remain read-only after creation (set in Build-LinuxBase.ps1 / Build-WindowsBase.ps1). If you need to rebuild a base, delete its sentinel and re-run.
 - The kubeconfig server address is patched in **Phase 9** (`Export-KubeConfig.ps1`). Don't use the raw kubeconfig from the VM.
+- **Packer `execute_command` must include `env {{.Vars}}`** for shell provisioners running under `sudo`. Plain `sudo -S bash {{.Path}}` silently drops all `environment_vars` (sudo strips env by default). The correct form is `echo '...' | sudo -S env {{.Vars}} bash {{.Path}}`. Without this, k3s version env vars are ignored and the golden image always uses the hardcoded script default.
+- **Kubelet removed flags for k8s 1.31+ and 1.33+**: `--pod-infra-container-image` was removed in k8s 1.31 — set it in `KubeletConfiguration.podInfraContainerImage` instead. `--cloud-provider` was removed in k8s 1.33 — omit it entirely. Both flags cause kubelet to exit immediately with "unknown flag", preventing the kubelet service from ever reaching Running state.
+- **Calico 3.30+ two-phase Helm install**: the tigera-operator chart registers CRDs via the operator pod itself. Helm validates resources against the API schema before applying them, so a single `helm install` fails with "no matches for kind X". Fix: install the operator first with all CRs disabled (`--set installation.enabled=false` etc.), wait for the operator pod to start (which registers the CRDs), then `helm upgrade` with the full values file. `Apply-CNI.ps1` handles this automatically.
 
 ## See Also
 

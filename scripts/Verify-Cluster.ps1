@@ -8,7 +8,10 @@
 #   3.  CoreDNS pods Running
 #   4.  CNI-specific health (multus DaemonSet, NAD CRD, cni-plugins binary presence,
 #       secondary-network attachment functional test — multus scenarios only)
-#   5.  Deploy a test DaemonSet (alpine, linux nodeSelector)
+#   4b. Multus agent pod restart counts (detects crash loops the DS ready check misses)
+#   4c. network-status annotation structural validation (name format, interface, ips fields)
+#   5.  Storage provisioner: local-path StorageClass + provisioner pod + PVC lifecycle test
+#   6.  Deploy a test DaemonSet (alpine, linux nodeSelector)
 #   6.  Wait for all test pods to be Running
 #   7.  Cross-node pod-to-pod ICMP ping (verifies overlay/route connectivity)
 #   8.  Cross-node pod-to-pod HTTP curl (busybox httpd on port 8080)
@@ -266,10 +269,165 @@ spec:
             }
             Record-Result $hasSecondary `
                 "Multus secondary interface attached (network-status ≥2 entries)" $detail
+
+            # Structural validation: every entry must have name, interface, and ips;
+            # the secondary entry name must follow the "namespace/nad-name" format.
+            if ($hasSecondary) {
+                $allParsed = @($parsed)
+                $malformed = @($allParsed | Where-Object {
+                    -not $_.name -or -not $_.interface -or
+                    -not ($_.ips -and @($_.ips).Count -gt 0)
+                })
+                Record-Result ($malformed.Count -eq 0) `
+                    "network-status entries well-formed (name + interface + ips)" `
+                    "$(if ($malformed.Count -gt 0) { "$($malformed.Count) entry/entries missing fields" } else { "$($allParsed.Count) entries valid" })"
+
+                $secondary = @($allParsed | Where-Object {
+                    -not ($_.PSObject.Properties['default'] -and $_.default)
+                })
+                foreach ($s in $secondary) {
+                    $expectedName = "$multusTestNs/verify-macvlan"
+                    Record-Result ($s.name -eq $expectedName) `
+                        "Secondary attachment name format (namespace/nad-name)" `
+                        "expected='$expectedName' got='$($s.name)'"
+                }
+            }
         }
     } finally {
         Invoke-KubectlRaw @('delete', 'namespace', $multusTestNs,
             '--ignore-not-found', '--timeout=30s') | Out-Null
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Storage provisioner health + PVC lifecycle
+# ---------------------------------------------------------------------------
+function Test-StorageProvisioner {
+    Write-Step "=== Storage: local-path provisioner + PVC lifecycle ==="
+
+    # k3s ships with local-path-provisioner out of the box.
+    # Check StorageClass exists.
+    try {
+        $scJson     = Invoke-KubectlRaw @('get', 'storageclass', 'local-path', '-o', 'json') | ConvertFrom-Json
+        $provisioner = $scJson.provisioner
+        $bindMode    = $scJson.volumeBindingMode
+        Record-Result $true "StorageClass 'local-path' exists" "provisioner=$provisioner, bindingMode=$bindMode"
+    } catch {
+        Record-Result $false "StorageClass 'local-path' exists" "$_"
+        return
+    }
+
+    # Check provisioner pod is Running.
+    try {
+        $provPods = @(Invoke-KubectlRaw @(
+            'get', 'pods', '-A',
+            '-l', 'app=local-path-provisioner', '--no-headers'
+        ) | Where-Object { $_ -match '\bRunning\b' })
+        Record-Result ($provPods.Count -gt 0) "local-path-provisioner pod Running" "count=$($provPods.Count)"
+    } catch {
+        Record-Result $false "local-path-provisioner pod Running" "$_"
+    }
+
+    if ($HealthOnly) { return }
+
+    # PVC lifecycle: create a PVC + minimal pod, wait for PVC to bind, verify
+    # a file written through the volume is readable, then clean up.
+    # local-path uses WaitForFirstConsumer on some builds — the pod is required
+    # to trigger binding, so we deploy both together.
+    $storageTestNs  = 'kube-verify-storage'
+    $storePvcName   = 'verify-pvc'
+    $storePodName   = 'verify-pvc-pod'
+    try {
+        $null = Invoke-KubectlRaw @('get', 'namespace', $storageTestNs) 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Invoke-Kubectl @('create', 'namespace', $storageTestNs)
+        }
+
+        $pvcYaml = @"
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: $storePvcName
+  namespace: $storageTestNs
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: $storePodName
+  namespace: $storageTestNs
+spec:
+  nodeSelector:
+    kubernetes.io/os: linux
+  terminationGracePeriodSeconds: 5
+  containers:
+    - name: writer
+      image: alpine:3.19
+      command: ["sh", "-c", "echo ok > /data/test && sleep 60"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 100m
+          memory: 32Mi
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: $storePvcName
+"@
+        $tmpPvc = [System.IO.Path]::GetTempFileName() + '.yaml'
+        Set-Content -Path $tmpPvc -Value $pvcYaml -Encoding UTF8
+        try {
+            Invoke-Kubectl @('apply', '-f', $tmpPvc)
+        } finally {
+            Remove-Item $tmpPvc -ErrorAction SilentlyContinue
+        }
+
+        # Wait for PVC Bound (triggered by pod scheduling with local-path)
+        $pvcBound = Wait-Until -TimeoutSec 120 -PollSec 5 `
+            -Description 'PVC Bound' -NoThrow -Condition {
+                $phase = (Invoke-KubectlRaw @(
+                    'get', 'pvc', $storePvcName, '-n', $storageTestNs,
+                    '-o', 'jsonpath={.status.phase}'
+                ) 2>$null) -join ''
+                Write-Step "    PVC phase: $phase"
+                return ($phase -eq 'Bound')
+            }
+        Record-Result $pvcBound "PVC provisioned and Bound (local-path StorageClass)"
+
+        if ($pvcBound) {
+            # Wait for pod Running
+            $podRunning = Wait-Until -TimeoutSec 90 -PollSec 5 `
+                -Description 'storage test pod Running' -NoThrow -Condition {
+                    $phase = (Invoke-KubectlRaw @(
+                        'get', 'pod', $storePodName, '-n', $storageTestNs,
+                        '-o', 'jsonpath={.status.phase}'
+                    ) 2>$null) -join ''
+                    return ($phase -eq 'Running')
+                }
+
+            if ($podRunning) {
+                $catOut = (Invoke-KubectlRaw @(
+                    'exec', '-n', $storageTestNs, $storePodName, '--', 'cat', '/data/test'
+                ) 2>$null) -join ''
+                Record-Result ($catOut -match 'ok') "PVC write+read verified via pod exec" "content='$($catOut.Trim())'"
+            } else {
+                Record-Result $false "Storage test pod reached Running state"
+            }
+        }
+    } finally {
+        Invoke-KubectlRaw @(
+            'delete', 'namespace', $storageTestNs, '--ignore-not-found', '--timeout=30s'
+        ) | Out-Null
     }
 }
 
@@ -290,6 +448,19 @@ function Test-CNIHealth {
 
             $nadCrd = Invoke-KubectlRaw @('get', 'crd', 'network-attachment-definitions.k8s.cni.cncf.io')
             Record-Result ($LASTEXITCODE -eq 0) "NetworkAttachmentDefinition CRD registered"
+
+            # Per-agent-pod restart count — the DaemonSet desired==ready check passes even when
+            # pods are repeatedly crash-looping (they come back up quickly and look "ready").
+            $multusPodsJson = Invoke-KubectlRaw @('get', 'pods', '-n', 'kube-system', '-l', 'app=multus', '-o', 'json') | ConvertFrom-Json
+            foreach ($mp in @($multusPodsJson.items)) {
+                $mpName    = $mp.metadata.name
+                $mpRestarts = ($mp.status.containerStatuses | Measure-Object -Property restartCount -Sum).Sum
+                if ($mpRestarts -ge 5) {
+                    Record-Result $false "Multus pod '$mpName' restart count" "restarts=$mpRestarts — possible crash loop"
+                } else {
+                    Record-Result $true "Multus pod '$mpName' restart count" "restarts=$mpRestarts"
+                }
+            }
 
             # Verify cni-plugins binaries are installed and secondary-network attachment works.
             # Multus v4.x silently drops secondary interfaces when the delegated binary is missing.
@@ -726,6 +897,7 @@ function Invoke-Verify {
     Test-NodeReadiness
     Test-SystemPods
     Test-CNIHealth
+    Test-StorageProvisioner
 
     if (-not $HealthOnly) {
         Deploy-TestDaemonSet

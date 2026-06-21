@@ -234,14 +234,51 @@ function Invoke-ApplyCNI {
             $valuesFile = Join-Path $script:RepoRoot 'config\cni\calico-values.yaml'
             Assert-True (Test-Path $valuesFile) "Calico values file not found at '$valuesFile'"
 
-            Invoke-Step 'Helm install Calico (tigera-operator)' {
+            # --- Step 1: Install the operator only (CRs disabled) ---
+            # The tigera-operator chart installs both the operator deployment AND Custom
+            # Resources (Installation, APIServer, Goldmane, Whisker) in a single release.
+            # Helm validates all resources against the API server schema BEFORE applying
+            # them, so it fails with "no matches for kind X" because the CRDs don't exist
+            # yet — they are registered by the operator itself on first run.
+            #
+            # Fix: two-phase install.
+            #   Phase 1 — install the operator deployment only (all CRs disabled via --set).
+            #              The operator starts and registers the CRDs.
+            #   Phase 2 — helm upgrade with the full values file, which creates the CRs now
+            #              that the API server knows the kinds.
+            Invoke-Step 'Helm install tigera-operator (operator only, CRs disabled)' {
                 helm upgrade --install calico projectcalico/tigera-operator `
                     --namespace tigera-operator `
                     --create-namespace `
                     --version $script:CalicoVersion `
+                    --set 'installation.enabled=false' `
+                    --set 'apiServer.enabled=false' `
+                    --set 'goldmane.enabled=false' `
+                    --set 'whisker.enabled=false' `
+                    --wait --timeout 5m
+                if ($LASTEXITCODE -ne 0) { throw "helm install tigera-operator (phase 1) failed (exit $LASTEXITCODE)" }
+            }
+
+            # Wait for the operator pod to be Running (it registers the CRDs when it starts)
+            # Note: helm --wait above already ensures the deployment is ready. We just need
+            # a brief pause so the CRDs are fully propagated to all API server endpoints.
+            Wait-Until -TimeoutSec 120 -PollSec 10 -Description 'tigera-operator pod Running' -Condition {
+                $pods = kubectl get pods -n tigera-operator -l 'k8s-app=tigera-operator' --no-headers 2>$null
+                $running = @($pods | Where-Object { $_ -match '\bRunning\b' }).Count
+                Write-Step "  tigera-operator pods Running: $running"
+                return ($running -gt 0)
+            }
+            Write-Step "Waiting 15s for CRDs to fully register in API server..."
+            Start-Sleep -Seconds 15
+
+            # --- Step 2: Upgrade with full values (creates CRs now that CRDs are registered) ---
+            Invoke-Step 'Helm upgrade Calico (enable CRs — Installation, APIServer, Goldmane, Whisker)' {
+                helm upgrade --install calico projectcalico/tigera-operator `
+                    --namespace tigera-operator `
+                    --version $script:CalicoVersion `
                     -f $valuesFile `
                     --wait --timeout 10m
-                if ($LASTEXITCODE -ne 0) { throw "helm install calico failed (exit $LASTEXITCODE)" }
+                if ($LASTEXITCODE -ne 0) { throw "helm upgrade calico (phase 2) failed (exit $LASTEXITCODE)" }
             }
 
             # Wait for calico-node pods to be Running
