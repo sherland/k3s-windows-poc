@@ -58,7 +58,7 @@ $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @(`n    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }`n)"
 
-Set-Content $configPath $cfg -Encoding UTF8
+Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
 Write-Host "[OK] config/variables.ps1 → CNI=flannel, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=1×WS2022" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------

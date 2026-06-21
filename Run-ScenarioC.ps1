@@ -61,7 +61,7 @@ $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario C"
 
-Set-Content $configPath $cfg -Encoding UTF8
+Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
 Write-Host "[OK] config/variables.ps1 → CNI=cilium, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=@()" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
