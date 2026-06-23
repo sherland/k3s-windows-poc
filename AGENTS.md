@@ -12,12 +12,12 @@ Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built on
 
 | Scenario | Script | CNI | Nodes | Result |
 |----------|--------|-----|-------|--------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | PASS (04:38) |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | PASS (04:22) |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (06:39) |
-| D | `Run-ScenarioD.ps1` | Calico v3.32.0 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (05:12) |
-| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 38/38 PASS (06:35) |
-| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows, VXLAN) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | PASS (43/43) |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | PASS (04:47) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | PASS (04:53) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 30/30 PASS (06:20) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.0 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 30/30 PASS (05:54) |
+| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 40/40 PASS (07:06) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows, VXLAN) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 43/43 PASS (07:35) |
 
 Each scenario script: patches `config/variables.ps1`, tears down any existing cluster (keeping ISOs/cache by default), then runs all phases 0–10 end-to-end.
 All scenarios default to **2 Linux workers** (`lnx-01` + `lnx-02`). Pass `-NoExtraWorker` to each script to use only 1.

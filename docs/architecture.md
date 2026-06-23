@@ -13,7 +13,7 @@ enabling fast node provisioning and reproducible rebuilds.
 3. [How Nodes Are Created from Golden Images](#3-how-nodes-are-created-from-golden-images)
 4. [How Node Identities Are Injected](#4-how-node-identities-are-injected)
 5. [How Workers Join the Cluster](#5-how-workers-join-the-cluster)
-6. [Scenario Comparison — A, B, C, D, E](#6-scenario-comparison--a-b-c-d-e)
+6. [Scenario Comparison — A, B, C, D, E, F](#6-scenario-comparison--a-b-c-d-e-f)
 7. [Service Mesh Considerations](#7-service-mesh-considerations)
 8. [CNI Deep Dive](#8-cni-deep-dive)
 9. [Node Roles and Installed Components](#9-node-roles-and-installed-components)
@@ -36,7 +36,7 @@ Windows 11 Host (Hyper-V)
     ├── k8s-cp-01    (Linux control plane — k3s server)
     ├── k8s-lnx-01   (Linux worker — k3s agent)
     ├── k8s-lnx-02   (additional Linux workers, if configured)
-    └── k8s-win-01   (Windows worker — upstream kubelet + kube-proxy)  [Scenario A only]
+    └── k8s-win-01   (Windows worker — upstream kubelet + kube-proxy)  [Scenarios A, E, F]
 
 External Hyper-V vSwitch: k8s-external
     — bridges all VMs + host onto the same physical NIC
@@ -318,7 +318,7 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ---
 
-## 6. Scenario Comparison — A, B, C, D, E
+## 6. Scenario Comparison — A, B, C, D, E, F
 
 All scenarios use k3s v1.35.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
@@ -327,7 +327,7 @@ workers. They differ in CNI plugin, Windows node support, and networking capabil
 
 ### Scenario A — Flannel (embedded) + Windows worker
 
-**Script:** `Run-ScenarioA.ps1` | **Verified:** PASS (04:38)
+**Script:** `Run-ScenarioA.ps1` | **Verified:** PASS (04:47)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
 
@@ -366,7 +366,7 @@ development or CI environments where policy enforcement is not required.
 
 ### Scenario B — Multus (meta-CNI on top of Flannel) + macvlan secondary interfaces
 
-**Script:** `Run-ScenarioB.ps1` | **Verified:** 28/28 PASS
+**Script:** `Run-ScenarioB.ps1` | **Verified:** 28/28 PASS (04:53)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -433,7 +433,7 @@ that need pod network isolation at the L2/VLAN level without replacing the prima
 
 ### Scenario C — Cilium (full CNI replacement) + Hubble
 
-**Script:** `Run-ScenarioC.ps1` | **Verified:** 28/28 PASS (06:39)
+**Script:** `Run-ScenarioC.ps1` | **Verified:** 30/30 PASS (06:20)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -504,7 +504,7 @@ where Flannel's limitations are a bottleneck.
 
 ### Scenario D — Calico (full CNI replacement via tigera-operator)
 
-**Script:** `Run-ScenarioD.ps1` | **Verified:** 28/28 PASS (05:12)
+**Script:** `Run-ScenarioD.ps1` | **Verified:** 30/30 PASS (05:54)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 (Linux-only)
 
@@ -564,7 +564,7 @@ lifecycle; workloads that need GlobalNetworkPolicy or HostEndpoint policy.
 
 ### Scenario E — Flannel + Chained Cilium (eBPF observability) + Windows worker
 
-**Script:** `Run-ScenarioE.ps1` | **Verified:** 38/38 PASS (06:35)
+**Script:** `Run-ScenarioE.ps1` | **Verified:** 40/40 PASS (07:06)
 
 **Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
 
@@ -632,27 +632,106 @@ first (Phase 7), then Cilium is chained in post-join (Phase 8). This is the reve
 migrate fully to Cilium as the primary CNI; environments that want to evaluate Hubble
 before committing to a full Cilium CNI migration.
 
-| Capability | A (Flannel) | B (Multus) | C (Cilium) | D (Calico) | E (Flannel+Cilium) |
-|-----------|:-----------:|:-----------:|:-----------:|:-----------:|:-------------------:|
-| Windows workers | ✅ | ❌ | ❌ | ❌ | ✅ |
-| Multi-homed pods | ❌ | ✅ | ❌† | ❌† | ❌† |
-| NetworkPolicy (L3/L4) | ❌ | ❌ | ✅ | ✅ | partial (Linux) |
-| L7 NetworkPolicy (HTTP/gRPC) | ❌ | ❌ | ✅ | ❌ | ❌ |
-| GlobalNetworkPolicy | ❌ | ❌ | ✅‡ | ✅ | ❌ |
-| HostEndpoint policy | ❌ | ❌ | ✅ | ✅ | ❌ |
-| Pod-to-pod encryption | ❌ | ❌ | ✅ (WG/IPsec) | ✅ (WG) | ❌ |
-| eBPF data plane | ❌ | ❌ | ✅ | optional | Linux nodes only |
-| kube-proxy replacement | ❌ | ❌ | optional | ❌ | ❌ |
-| Flow observability | ❌ | ❌ | ✅ (Hubble) | ❌ | ✅ Linux (Hubble) |
-| BGP peering | ❌ | ❌ | ❌ | ✅ | ❌ |
-| Service mesh (sidecar) | add-on | add-on | sidecar-free | add-on | add-on |
-| Overlay protocol | none (L2) | none (L2) | none (L2)§ | VXLAN | none (L2) |
-| Operational complexity | low | medium | medium-high | medium-high | medium-high |
+---
 
-† Cilium, Calico, and Flannel+Cilium can be combined with Multus for multi-homed pods, but that is not
+### Scenario F — Antrea (OVS, unified Linux + Windows data plane)
+
+**Script:** `Run-ScenarioF.ps1` | **Verified:** 43/43 PASS (07:35)
+
+**Topology:** k8s-cp-01 + k8s-lnx-01 + k8s-lnx-02 + k8s-win-01 (WS2022)
+
+**How it works:**
+
+Antrea is a CNI built on Open vSwitch (OVS). Unlike Cilium (eBPF) and Calico
+(iptables/eBPF), Antrea programs an OVS bridge on each node. OVS provides a portable,
+hardware-abstracted data plane that works identically on Linux and Windows — making
+Antrea the only CNI in this repo with a **unified data plane** across both OS types.
+
+k3s starts with `--flannel-backend=none --disable-network-policy`. Antrea is installed
+*before* workers join (same pre-join phase ordering as Cilium and Calico).
+
+**Linux:** Antrea is installed via Helm (`antrea/antrea` chart v2.6.2). The
+`antrea-controller` Deployment and `antrea-agent` DaemonSet run in `kube-system`.
+Each Linux node gets an OVS bridge and a gateway interface (`antrea-gw0`).
+
+**Windows:** The `antrea-windows-with-ovs.yml` DaemonSet uses **HostProcess Containers**
+(HPCs) — Windows containers that run in the host network namespace, allowing them to
+install kernel drivers and configure host networking. The HPC pod:
+1. Installs the OVS kernel driver (test-signed — `bcdedit /set TESTSIGNING ON` is set by
+   `k8s-firstboot.ps1` when `cniPlugin=antrea` is in the node config)
+2. Starts OVS daemons (`ovsdb-server`, `ovs-vswitchd`)
+3. Starts `antrea-agent.exe` which creates a Transparent HNS network and programs OVS flows
+
+`Apply-CNI.ps1` applies four runtime patches to the Windows DaemonSet YAML before applying it:
+1. `kubeAPIServerOverride` — injects the CP IP so `antrea-agent` can reach the API server
+2. `transportInterface: Ethernet 2` — sets the physical NIC (not the OVS-created vEthernet) for the data plane
+3. `prepare-network` init container — removes stale HNS networks before each pod restart
+4. `fix-cni-config` init container — copies `antrea.exe` and CNI config to `C:\k\cni\`,
+   removes the stale Flannel `conflist`, then restarts containerd
+
+```
+Networking (VXLAN):
+  Linux pod ← OVS bridge → VXLAN tunnel → OVS bridge → Windows pod
+  Antrea OVS handles L2 bridging + VXLAN encapsulation/decapsulation
+  All pods share a single Antrea overlay network
+```
+
+**Phase ordering (`Main.ps1`):** Same as Cilium and Calico — Phase 8 (CNI install) runs
+*before* Phase 7 (node join). The CP node stays `NotReady` until Antrea is installed;
+workers join and become Ready once `antrea-agent` programs their OVS bridges.
+
+**Advantages:**
+- **Unified data plane**: same OVS-based datapath on Linux and Windows — consistent
+  NetworkPolicy enforcement across both OS types (verified in Phase 10)
+- **Full NetworkPolicy** (standard `networking.k8s.io/v1`) plus **AntreaNetworkPolicy**
+  (namespaced, priority-ordered) and **ClusterNetworkPolicy** (cluster-wide, equivalent
+  to Calico's `GlobalNetworkPolicy`)
+- **Windows NP enforcement**: the only CNI in this repo (other than Flannel) that supports
+  Windows workers, and the only one that enforces NetworkPolicy on Windows pods
+- **HostProcess Container installation**: no manual driver installation needed — OVS is
+  fully managed by the HPC pod lifecycle
+- **`antctl` CLI**: baked into the controller image; provides `featuregates`,
+  `networkpolicy`, `addressgroups`, and `traceflow` diagnostics
+
+**Disadvantages:**
+- **OVS kernel driver is test-signed** — requires `TESTSIGNING` boot flag on Windows nodes;
+  not suitable for production-hardened environments without a commercial OVS build
+- **High operational complexity**: OVS bridges, HNS networks, HPCs, and multiple init
+  containers make troubleshooting harder than Flannel or Cilium
+- **Slow first boot**: OVS driver installation inside the HPC pod takes 1–3 minutes;
+  `Apply-CNI.ps1` waits up to 600 s
+- **No built-in flow observability** (no equivalent of Hubble); Antrea Flow Exporter
+  can ship to IPFIX-compatible collectors but is not configured here
+- VXLAN overhead vs Flannel `host-gw` (mitigated by NIC offload on modern hardware)
+- `antrea-agent` on Windows calls `Get-VMNetworkAdapter` (Hyper-V PS module), requiring
+  the `Microsoft-Hyper-V-Management-PowerShell` feature (enabled by `k8s-firstboot.ps1`)
+
+**When to choose:** Mixed Linux/Windows clusters that require **NetworkPolicy enforcement
+on Windows pods** (the only option in this repo for that requirement); environments
+already familiar with OVS; cases where a unified policy model across OS types is needed.
+
+| Capability | A (Flannel) | B (Multus) | C (Cilium) | D (Calico) | E (Flannel+Cilium) | F (Antrea) |
+|-----------|:-----------:|:-----------:|:-----------:|:-----------:|:-------------------:|:----------:|
+| Windows workers | ✅ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Multi-homed pods | ❌ | ✅ | ❌† | ❌† | ❌† | ❌† |
+| NetworkPolicy (L3/L4) | ❌ | ❌ | ✅ | ✅ | partial (Linux) | ✅ (L+W) |
+| L7 NetworkPolicy (HTTP/gRPC) | ❌ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| GlobalNetworkPolicy | ❌ | ❌ | ✅‡ | ✅ | ❌ | ✅∥ |
+| HostEndpoint policy | ❌ | ❌ | ✅ | ✅ | ❌ | ❌ |
+| Pod-to-pod encryption | ❌ | ❌ | ✅ (WG/IPsec) | ✅ (WG) | ❌ | ❌ |
+| eBPF data plane | ❌ | ❌ | ✅ | optional | Linux nodes only | ❌ (OVS) |
+| kube-proxy replacement | ❌ | ❌ | optional | ❌ | ❌ | partial |
+| Flow observability | ❌ | ❌ | ✅ (Hubble) | ❌ | ✅ Linux (Hubble) | ❌ |
+| BGP peering | ❌ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Service mesh (sidecar) | add-on | add-on | sidecar-free | add-on | add-on | add-on |
+| Overlay protocol | none (L2) | none (L2) | none (L2)§ | VXLAN | none (L2) | VXLAN |
+| Operational complexity | low | medium | medium-high | medium-high | medium-high | high |
+
+† Cilium, Calico, Flannel+Cilium, and Antrea can be combined with Multus for multi-homed pods, but that is not
   configured in these scenarios.
 ‡ Cilium calls these `CiliumClusterwideNetworkPolicy`.
 § Native routing is configured (`routingMode: native`); VXLAN mode is also supported.
+∥ Antrea calls these `ClusterNetworkPolicy`.
 
 ---
 
@@ -836,7 +915,7 @@ For Scenarios C and D, k3s starts with `--flannel-backend=none --disable-network
 Run `k3s agent`. The k3s binary is pre-installed in the base image; the systemd unit
 is written by `Join-Nodes.ps1` via SSH. Same containerd version as the CP.
 
-### Windows workers — `k8s-win-NN` (Scenario A only)
+### Windows workers — `k8s-win-NN` (Scenarios A, E, F)
 
 Does **not** run k3s. Uses upstream Kubernetes binaries.
 
@@ -858,6 +937,11 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 | `host-local.exe` | containernetworking/plugins | IPAM — allocates pod IPs from node CIDR |
 | `hns.psm1` | microsoft/SDN | PowerShell HNS helper module |
 
+> **Scenario F (Antrea):** Uses a different CNI stack. `antrea.exe` (the Antrea CNI binary)
+> is installed to `C:\k\cni\` by the HostProcess Container pod, along with the Antrea CNI
+> config. `flannel.exe` and `win-bridge.exe` are not used. The OVS data plane is managed
+> entirely by `antrea-agent.exe` running inside the HPC pod.
+
 ---
 
 ## 10. Phase Map
@@ -872,12 +956,12 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 | 5 | `New-WindowsNodes.ps1` | `node-<name>.done` per node | Differencing disks + VM created (not started) |
 | 6 | `Bootstrap-ControlPlane.ps1` | `cp-bootstrap.done` | k3s server + RBAC + credentials export |
 | 7 | `Join-Nodes.ps1` | `node-<name>-ready.done` per node | Linux: SSH agent install; Windows: offline VHD inject + first boot |
-| 8 | `Apply-CNI.ps1` | `cni.done` | Flannel: no-op; Multus: kubectl apply; Cilium/Calico: Helm install |
+| 8 | `Apply-CNI.ps1` | `cni.done` | Flannel: no-op; Multus: kubectl apply; Cilium/Calico/Antrea: Helm install; Antrea Windows: DaemonSet YAML (patched) |
 | 9 | `Export-KubeConfig.ps1` | `kubeconfig.done` | Copies + patches kubeconfig from CP VM |
-| 10 | `Verify-Cluster.ps1` | `verify.done` | Cross-node ICMP, HTTP, DNS, ClusterIP, CNI health, Windows pod |
+| 10 | `Verify-Cluster.ps1` | `verify.done` | Cross-node ICMP, HTTP, DNS, ClusterIP, CNI health, NetworkPolicy enforcement (Cilium/Calico/Antrea), Windows pod |
 
 **Phase ordering:** `Main.ps1` adjusts the Phase 7/8 order based on CNI:
-- `cilium` / `calico`: runs Phase 8 (`Apply-CNI.ps1`) *before* Phase 7 (`Join-Nodes.ps1`)
+- `cilium` / `calico` / `antrea`: runs Phase 8 (`Apply-CNI.ps1`) *before* Phase 7 (`Join-Nodes.ps1`)
   so nodes have a working CNI when they join (nodes stay `NotReady` without it).
 - `flannel+cilium`: runs Phase 7 first (Flannel handles routing; all nodes incl. Windows
   join normally), then Phase 8 chains Cilium in post-join.

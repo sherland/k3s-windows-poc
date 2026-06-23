@@ -4,11 +4,12 @@ Automates building a configurable k3s cluster on a single Windows 11 host using 
 
 | Scenario | Script | CNI | Nodes | Verified |
 |----------|--------|-----|-------|---------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2022) | PASS (04:38) |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel + macvlan | CP + 2 Linux | PASS (04:22) |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble | CP + 2 Linux | 28/28 PASS (06:39) |
-| D | `Run-ScenarioD.ps1` | Calico v3.32.0 | CP + 2 Linux | 28/28 PASS (05:12) |
-| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2022) | 38/38 PASS (06:35) |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2022) | PASS (04:47) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel + macvlan | CP + 2 Linux | PASS (04:53) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble | CP + 2 Linux | 30/30 PASS (06:20) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.0 | CP + 2 Linux | 30/30 PASS (05:54) |
+| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2022) | 40/40 PASS (07:06) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows) | CP + 2 Linux + 1 Windows (WS2022) | 43/43 PASS (07:35) |
 
 Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
@@ -49,11 +50,14 @@ All scenario scripts handle teardown, config patching, full build, and verificat
 # Scenario E: Flannel + chained Cilium + Hubble + CP + 2 Linux workers + 1 Windows worker
 .\Run-ScenarioE.ps1
 
-# Run all 5 scenarios in sequence (with teardown after the last one)
+# Scenario F: Antrea OVS + CP + 2 Linux workers + 1 Windows worker (WS2022)
+.\Run-ScenarioF.ps1
+
+# Run all 6 scenarios in sequence (with teardown after the last one)
 .\Run-AllScenarios.ps1 -CleanupAfterAll
 
 # Run a subset
-.\Run-AllScenarios.ps1 -Scenarios A,C,E
+.\Run-AllScenarios.ps1 -Scenarios A,C,F
 ```
 
 Add `-DeleteGoldenImages` to force a full Packer rebuild of base VHDXs (needed when changing k3s version, base OS packages, etc.):
@@ -81,7 +85,7 @@ If you want fine-grained control, patch `config/variables.ps1` and drive the orc
 Edit [`config/variables.ps1`](config/variables.ps1):
 
 ```powershell
-# CNI plugin: 'flannel' | 'multus' | 'cilium' | 'calico' | 'none'
+# CNI plugin: 'flannel' | 'multus' | 'cilium' | 'calico' | 'flannel+cilium' | 'antrea' | 'none'
 $script:CNIPlugin = 'flannel'
 
 # Windows workers (set Count=0 for Linux-only cluster)
@@ -123,8 +127,9 @@ kubectl get nodes -o wide
 | Cilium | `'cilium'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Hubble relay+UI enabled. Installed via Helm. |
 | Flannel + Cilium | `'flannel+cilium'` | Flannel handles routing (incl. Windows workers); Cilium chained for eBPF observability on Linux nodes. Hubble relay+UI enabled. Installed via Helm post-join. |
 | Calico | `'calico'` | Full CNI replacement. Linux-only. Replaces Flannel (`--flannel-backend=none`). Installed via Helm (tigera-operator). |
+| Antrea | `'antrea'` | Full CNI replacement. Linux + Windows. OVS data plane, VXLAN tunnel mode. NetworkPolicy enforcement on both OS types. Installed via Helm (Linux) + HostProcess Container DaemonSet (Windows). |
 
-**Phase ordering note:** For Cilium and Calico, the CNI must be installed *before* workers join (nodes stay `NotReady` without a CNI). For `flannel+cilium`, all nodes join first (Flannel provides routing), then Cilium is chained in post-join. `Main.ps1` handles this ordering automatically for all three.
+**Phase ordering note:** For Cilium, Calico, and Antrea, the CNI must be installed *before* workers join (nodes stay `NotReady` without a CNI). For `flannel+cilium`, all nodes join first (Flannel provides routing), then Cilium is chained in post-join. `Main.ps1` handles this ordering automatically for all four.
 
 ---
 
@@ -201,9 +206,9 @@ Scale-down sequence per node: `kubectl cordon` → `kubectl drain` → `kubectl 
 | 5 | `New-WindowsNodes.ps1` | Differencing disks for Windows nodes | < 1 min |
 | 6 | `Bootstrap-ControlPlane.ps1` | k3s server + RBAC + credentials export | 1–3 min |
 | 7 | `Join-Nodes.ps1` | Linux workers (SSH) + Windows workers (VMBus) | 1–5 min |
-| 8 | `Apply-CNI.ps1` | Apply CNI plugin (Multus/Cilium/Calico; no-op for Flannel) | 1–5 min |
+| 8 | `Apply-CNI.ps1` | Apply CNI plugin (Multus/Antrea/Cilium/Calico via Helm; no-op for Flannel) | 1–5 min |
 | 9 | `Export-KubeConfig.ps1` | Write `output/kubeconfig.yaml` + `cluster-info.txt` | < 1 min |
-| 10 | `Verify-Cluster.ps1` | Cross-node ping, DNS, ClusterIP, CNI health | 1–3 min |
+| 10 | `Verify-Cluster.ps1` | Cross-node ping, DNS, ClusterIP, CNI health, NetworkPolicy enforcement (Cilium/Calico/Antrea) | 1–3 min |
 
 All phases are **idempotent** — sentinel files in `output/sentinels/` skip already-completed work.
 
@@ -231,14 +236,16 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 ├── Run-ScenarioC.ps1          # End-to-end: Cilium + Hubble + CP + 2 Linux workers
 ├── Run-ScenarioD.ps1          # End-to-end: Calico + CP + 2 Linux workers
 ├── Run-ScenarioE.ps1          # End-to-end: Flannel + chained Cilium + Hubble + CP + 2 Linux workers + Windows worker
-├── Run-AllScenarios.ps1       # Orchestrates all (or a subset of) scenarios A–E sequentially
+├── Run-ScenarioF.ps1          # End-to-end: Antrea OVS + CP + 2 Linux workers + Windows worker (WS2022)
+├── Run-AllScenarios.ps1       # Orchestrates all (or a subset of) scenarios A–F sequentially
 ├── config/
 │   ├── variables.ps1          # Single source of truth: versions, topology, credentials
 │   └── cni/
 │       ├── multus-daemonset.yaml      # Multus v4.3.0 DaemonSet manifest
-│       ├── cilium-values.yaml         # Cilium v1.19.4 Helm values (Hubble enabled)
+│       ├── cilium-values.yaml         # Cilium v1.19.5 Helm values (Hubble enabled)
 │       ├── cilium-chained-values.yaml # Cilium chained-mode values for Scenario E
-│       └── calico-values.yaml         # Calico v3.29.3 tigera-operator Helm values
+│       ├── calico-values.yaml         # Calico v3.32.0 tigera-operator Helm values
+│       └── antrea-values.yaml         # Antrea v2.6.2 Helm values (VXLAN, Linux nodeSelector)
 ├── docs/
 │   └── architecture.md        # Component layout, networking, build sequence
 ├── output/                    # Generated at runtime
@@ -281,7 +288,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 | Phase 0 triggers a reboot | Normal — Hyper-V requires reboot. Re-run after reboot; sentinels preserve progress. |
 | Packer build fails (SSH timeout) | Usually a transient cloud-init timing issue; re-run with `-ForcePhase BASE-L`. |
 | Windows VM fails to join | Re-run `.\scripts\Main.ps1 -ForceNode k8s-win-01`; check `C:\k8s-firstboot-log.txt` inside the VM. |
-| Nodes stay `NotReady` (Cilium/Calico) | Phase ordering: CNI must deploy before workers join. This is handled automatically; re-run from phase 7 if disrupted. |
+| Nodes stay `NotReady` (Cilium/Calico/Antrea) | Phase ordering: CNI must deploy before workers join. This is handled automatically; re-run from phase 7 if disrupted. |
 | Hubble flows not captured | Hubble observe reads the per-node ring buffer; if no traffic has been generated yet, run cross-node tests first. The verification script (`Verify-Cluster.ps1`) generates traffic before querying Hubble. |
 | `kubectl` can't connect / workers `NotReady` after changing networks | Run `.\Update-KubeConfig.ps1` — patches the kubeconfig and restarts `k3s-agent` on all workers with the new CP IP. |
 | `kubectl` can't connect | Verify `$env:KUBECONFIG` points to `output/kubeconfig.yaml`; check `output/linux-vm-ip.txt`. |
