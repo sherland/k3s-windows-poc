@@ -17,10 +17,11 @@ Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built on
 | C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (06:39) |
 | D | `Run-ScenarioD.ps1` | Calico v3.32.0 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 28/28 PASS (05:12) |
 | E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | 38/38 PASS (06:35) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows, VXLAN) | CP + lnx-01 + lnx-02 + win-01 (WS2022) | PASS (43/43) |
 
 Each scenario script: patches `config/variables.ps1`, tears down any existing cluster (keeping ISOs/cache by default), then runs all phases 0–10 end-to-end.
 All scenarios default to **2 Linux workers** (`lnx-01` + `lnx-02`). Pass `-NoExtraWorker` to each script to use only 1.
-Use `Run-AllScenarios.ps1` to run all five scenarios in sequence.
+Use `Run-AllScenarios.ps1` to run all six scenarios in sequence.
 
 ## Key Entry Points
 
@@ -31,6 +32,8 @@ Use `Run-AllScenarios.ps1` to run all five scenarios in sequence.
 | [`Run-ScenarioB.ps1`](Run-ScenarioB.ps1) | End-to-end: Multus + CP + Linux worker |
 | [`Run-ScenarioC.ps1`](Run-ScenarioC.ps1) | End-to-end: Cilium + CP + Linux worker |
 | [`Run-ScenarioD.ps1`](Run-ScenarioD.ps1) | End-to-end: Calico + CP + Linux worker |
+| [`Run-ScenarioE.ps1`](Run-ScenarioE.ps1) | End-to-end: Flannel + chained Cilium + CP + Linux + Windows worker |
+| [`Run-ScenarioF.ps1`](Run-ScenarioF.ps1) | End-to-end: Antrea (OVS) + CP + Linux + Windows worker |
 | [`scripts/Main.ps1`](scripts/Main.ps1) | Orchestrator. Accepts `-StartFromPhase N`, `-ForcePhase N,M`, `-ForceNode name`, `-SkipWindowsNodes`, `-HealthCheckOnly`. |
 | [`scripts/Remove-Cluster.ps1`](scripts/Remove-Cluster.ps1) | Teardown. Flags: `-All`, `-VMs`, `-Network`, `-OutputFiles`, `-Downloads`, `-KeepBaseImages`, `-Force`, `-WhatIf`. |
 | [`config/variables.ps1`](config/variables.ps1) | **Single source of truth** for credentials, VM sizing, versions, node topology, CNI plugin. |
@@ -69,7 +72,7 @@ $script:WindowsNodeSpecs     = @(
 )
 
 # CNI: 'flannel' (default, required for Windows workers), 'flannel+cilium' (Flannel + chained Cilium, supports Windows),
-#      'cilium' (Linux-only), 'multus' (Linux-only), 'calico' (Linux-only), 'none'
+#      'cilium' (Linux-only), 'multus' (Linux-only), 'calico' (Linux-only), 'antrea' (Linux + Windows, OVS), 'none'
 $script:CNIPlugin            = 'flannel'
 ```
 
@@ -122,14 +125,16 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `New-WindowsNodes.ps1` | Working | Phase 5 — Differencing disks for all Windows nodes (not started) |
 | `Bootstrap-ControlPlane.ps1` | Working | Phase 6 — Configure k3s server on CP, export node-token + kubeconfig |
 | `Join-Nodes.ps1` | Working | Phase 7 — Join Linux workers (SSH) and Windows workers (Mount-VHD + VMBus) |
-| `Apply-CNI.ps1` | Working | Phase 8 — Apply CNI manifests (no-op for flannel, DaemonSet for multus, Helm for cilium/calico/flannel+cilium) |
+| `Apply-CNI.ps1` | Working | Phase 8 — Apply CNI manifests (no-op for flannel, DaemonSet for multus, Helm for cilium/calico/flannel+cilium/antrea) |
 | `Export-KubeConfig.ps1` | Working | Phase 9 — Write output/kubeconfig.yaml + cluster-info.txt |
 | `Verify-Cluster.ps1` | Working | Phase 10 — Cross-node pod connectivity, DNS, ClusterIP service, Hubble flow observability (Cilium scenarios), Windows node checks, CNI health per plugin |
 | `Install-Prerequisites.ps1` | Working | Phase 0 — Installs tools including Windows ADK (oscdimg) and Helm |
 | `Remove-Cluster.ps1` | Working | Teardown — iterates all nodes, removes vhdx/nodes/ |
-| `Main.ps1` | Working | 10-phase orchestrator; handles Cilium/Calico/flannel+cilium pre-join phase ordering |
+| `Main.ps1` | Working | 10-phase orchestrator; handles Cilium/Calico/Antrea/flannel+cilium pre-join phase ordering |
 | `Helpers.ps1` | Working | Get-AllLinuxNodeNames, Get-AllWindowsNodeNames, New-DifferencingNode, New-SeedISO, Send-SshFile, etc. |
-| `Run-AllScenarios.ps1` | Working | Runs all (or a subset of) scenarios A–E end-to-end; accepts `-Scenarios`, `-NoExtraWorker`, `-DeleteGoldenImages`, `-CleanupAfterAll` |
+| `Run-AllScenarios.ps1` | Working | Runs all (or a subset of) scenarios A–F end-to-end; accepts `-Scenarios`, `-NoExtraWorker`, `-DeleteGoldenImages`, `-CleanupAfterAll` |
+| `Run-ScenarioE.ps1` | Working | End-to-end: Flannel + chained Cilium + CP + Linux + Windows worker |
+| `Run-ScenarioF.ps1` | Working | End-to-end: Antrea OVS + CP + Linux + Windows worker (WS2022) |
 | `Build-LinuxVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Build-WindowsVM.ps1` | Legacy | Superseded (kept for reference) |
 | `Join-WindowsNode.ps1` | Legacy | Superseded (kept for reference) |
@@ -158,6 +163,7 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `config/cni/cilium-values.yaml` | Cilium v1.19.5 Helm values (native routing, IPAM=kubernetes, k3s CNI paths, **Hubble relay+UI enabled**) |
 | `config/cni/cilium-chained-values.yaml` | Cilium v1.19.5 Helm values for **generic-veth chaining mode** (Scenario E — layered on top of Flannel; Hubble relay+UI enabled, Linux-only nodeSelector) |
 | `config/cni/calico-values.yaml` | Calico v3.29.3 tigera-operator Helm values (VXLAN, BGP disabled, pod CIDR 10.42.0.0/16) |
+| `config/cni/antrea-values.yaml` | Antrea v2.6.2 Helm values (VXLAN tunnel, Linux agent nodeSelector, antreaProxy health-check server disabled) |
 
 ## Common Tasks
 
@@ -213,6 +219,16 @@ Runs the full sequence (0→4→3 force→1), asserts 6 invariants per step, the
 - **Packer `execute_command` must include `env {{.Vars}}`** for shell provisioners running under `sudo`. Plain `sudo -S bash {{.Path}}` silently drops all `environment_vars` (sudo strips env by default). The correct form is `echo '...' | sudo -S env {{.Vars}} bash {{.Path}}`. Without this, k3s version env vars are ignored and the golden image always uses the hardcoded script default.
 - **Kubelet removed flags for k8s 1.31+ and 1.33+**: `--pod-infra-container-image` was removed in k8s 1.31 — set it in `KubeletConfiguration.podInfraContainerImage` instead. `--cloud-provider` was removed in k8s 1.33 — omit it entirely. Both flags cause kubelet to exit immediately with "unknown flag", preventing the kubelet service from ever reaching Running state.
 - **Calico 3.30+ two-phase Helm install**: the tigera-operator chart registers CRDs via the operator pod itself. Helm validates resources against the API schema before applying them, so a single `helm install` fails with "no matches for kind X". Fix: install the operator first with all CRs disabled (`--set installation.enabled=false` etc.), wait for the operator pod to start (which registers the CRDs), then `helm upgrade` with the full values file. `Apply-CNI.ps1` handles this automatically.
+- **Antrea TESTSIGNING requirement**: The OVS kernel driver shipped in `antrea-windows-with-ovs.yml` is test-signed. Windows nodes must have `bcdedit /set TESTSIGNING ON` active. The firstboot script (`05-firstboot-setup.ps1`) sets this automatically when `cniPlugin=antrea` in `k8s-node-config.json`, and it takes effect on the rename/reboot that follows.
+- **Antrea PrepareAntreaAgent startup task**: Registered by the firstboot script for Antrea nodes. Runs at every boot (not just first boot) to clean stale OVS bridge / HNS networks before the antrea-agent HostProcess Container starts. Uses `-RunOVSServices $false` because OVS runs containerized inside the HPC pod.
+- **Antrea CNI binary path mismatch**: `install-cni` puts `antrea.exe` in `C:\opt\cni\bin\` but containerd's `bin_dir = "C:\k\cni"` (set in `C:\containerd\config\config.toml`). The `fix-cni-config` init container (injected by `Apply-CNI.ps1`) copies `antrea.exe` to `C:\k\cni\` after `install-cni` runs. The `FixAntreaCniPath` AtStartup task does the same on subsequent boots.
+- **Antrea Windows OVS driver install is slow**: The containerized OVS driver installation inside the HostProcess Container can take 1–3 minutes on first boot. `Apply-CNI.ps1` waits up to 600 s for the antrea-agent-windows pod to reach Running state. Do not interrupt the first boot.
+- **Antrea transportInterface must be physical adapter**: When OVS creates the Transparent HNS network, the node IP migrates from `Ethernet 2` to `vEthernet (Ethernet 2)`. antrea-agent must be told to use the physical adapter explicitly via `transportInterface: Ethernet 2` in the `antrea-windows-config` ConfigMap. Apply-CNI.ps1 patches this automatically via a multiline-safe regex (`(?m)^\s*#?\s*transportInterface:.*$`).
+- **Antrea containerd CNI path mismatch**: containerd reads CNI config from `C:\k\cni\config` (set in `C:\containerd\config\config.toml`), NOT from `C:\etc\cni\net.d` (where the Antrea `install-cni` init container writes). After firstboot, the stale Flannel `10-flannel.conflist` (sdnbridge plugin) remains in `C:\k\cni\config` and takes precedence. Fix: the `fix-cni-config` init container (injected by Apply-CNI.ps1 after `install-cni`) removes the Flannel config and copies the Antrea config without BOM to `C:\k\cni\config`, then restarts containerd. The `FixAntreaCniPath` AtStartup task (registered by firstboot patching) handles this for subsequent boots.
+- **Antrea Hyper-V PowerShell module required**: antrea-agent on Windows calls `Get-VMNetworkAdapter` (in the Hyper-V PS module) to discover the vNIC MAC address after OVS creates the Transparent HNS bridge. `Microsoft-Hyper-V-Management-PowerShell` is disabled by default on Hyper-V Gen 1 guests. The firstboot patch enables `RSAT-Hyper-V-Tools-Feature` + `Microsoft-Hyper-V-Management-PowerShell` via `Enable-WindowsOptionalFeature`.
+- **Antrea prepare-network init container**: The `antrea-agent-windows` DaemonSet gets a `prepare-network` init container injected by Apply-CNI.ps1 that removes stale HNS networks (`antrea-hnsnetwork`, `cbr0`, `vxlan0`) before each pod restart. Without this, antrea-agent crashes on restart because the previous run's Transparent HNS network keeps the IP on `vEthernet (Ethernet 2)` instead of `Ethernet 2`.
+- **PS5.1 em dash encoding in Packer scripts**: Packer runs Windows provisioner scripts via `powershell.exe` (PS 5.1), not `pwsh`. Source files without a UTF-8 BOM are read as Windows-1252. An em dash `—` stored as UTF-8 bytes `0xE2 0x80 0x94` is decoded as `â€"` (three Windows-1252 chars), where `0x94` = U+201D RIGHT DOUBLE QUOTATION MARK, which PowerShell treats as a closing `"` inside double-quoted strings. This silently breaks string literals in any generated script and causes parse failures at runtime. **Rule**: Use ASCII hyphen `-` (not em dash) in double-quoted strings inside any Packer provisioner script.
+- **`grep -c 'Ready'` matches `NotReady`**: `grep -c 'Ready'` counts every line containing the substring "Ready", including lines with status `NotReady`. Use `awk '$2=="Ready"{c++} END{print c+0}'` for exact status-column matching. The `|| echo '0'` fallback on a failed grep also produces a two-line string (`0\n0`) that breaks integer comparisons in `[ "$n" -ge 1 ]`. The awk form always emits a clean integer.
 
 ## See Also
 

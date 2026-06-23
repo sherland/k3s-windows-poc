@@ -10,6 +10,9 @@
 #       secondary-network attachment functional test — multus scenarios only)
 #   4b. Multus agent pod restart counts (detects crash loops the DS ready check misses)
 #   4c. network-status annotation structural validation (name format, interface, ips fields)
+#   4d. Antrea: antrea-controller, antrea-agent DS, antrea-agent-windows pods,
+#       Antrea CRDs present, antctl featuregates, NetworkPolicy deny/allow round-trip,
+#       OVS br-int bridge visible on Windows node (VXLAN mode)
 #   5.  Storage provisioner: local-path StorageClass + provisioner pod + PVC lifecycle test
 #   6.  Deploy a test DaemonSet (alpine, linux nodeSelector)
 #   6.  Wait for all test pods to be Running
@@ -18,9 +21,10 @@
 #   9.  DNS resolution inside pods (nslookup kubernetes.default.svc.cluster.local)
 #  10.  ClusterIP service reachability (curl to service IP)
 #  11.  Hubble flow observability (cilium + flannel+cilium only): relay/UI ready, flows captured
-#  12.  Windows node check (if any): kubelet Running, node labeled, pause pod schedules
-#  13.  Clean up test namespace
-#  14.  Print pass/fail summary with timing
+#  12.  Antrea: antctl featuregates, NetworkPolicy enforcement, OVS bridge on Windows
+#  13.  Windows node check (if any): kubelet Running, node labeled, pause pod schedules
+#  14.  Clean up test namespace
+#  15.  Print pass/fail summary with timing
 #
 # Sentinel: verify.done
 # =============================================================================
@@ -496,6 +500,47 @@ function Test-CNIHealth {
                 '--no-headers') | Where-Object { $_ -match '\bRunning\b' })
             Record-Result ($calicoPods.Count -gt 0) "Calico node pods Running" "count=$($calicoPods.Count)"
         }
+        'antrea' {
+            # antrea-controller Deployment
+            $raw = Invoke-KubectlRaw @('get', 'deployment', 'antrea-controller', '-n', 'kube-system', '-o', 'json') 2>$null
+            if ($raw) {
+                $dep     = $raw | ConvertFrom-Json
+                $ready   = if ($dep.status.PSObject.Properties['readyReplicas']) { [int]$dep.status.readyReplicas } else { 0 }
+                $desired = [int]$dep.spec.replicas
+                Record-Result ($ready -gt 0 -and $ready -eq $desired) `
+                    "antrea-controller Deployment ready" "ready=$ready/$desired"
+            } else {
+                Record-Result $false "antrea-controller Deployment found"
+            }
+            # antrea-agent DaemonSet (Linux nodes)
+            $raw = Invoke-KubectlRaw @('get', 'ds', 'antrea-agent', '-n', 'kube-system', '-o', 'json') 2>$null
+            if ($raw) {
+                $ds      = $raw | ConvertFrom-Json
+                $desired = [int]$ds.status.desiredNumberScheduled
+                $ready   = if ($ds.status.PSObject.Properties['numberReady']) { [int]$ds.status.numberReady } else { 0 }
+                Record-Result ($desired -gt 0 -and $ready -eq $desired) `
+                    "antrea-agent DaemonSet ready (Linux nodes)" "ready=$ready/$desired"
+            } else {
+                Record-Result $false "antrea-agent DaemonSet found"
+            }
+            # antrea-agent-windows pods (if Windows nodes present)
+            $winNodes = @(Get-AllWindowsNodeNames)
+            if ($winNodes.Count -gt 0) {
+                $winPods = @(Invoke-KubectlRaw @('get', 'pods', '-n', 'kube-system', '--no-headers') 2>$null |
+                    Where-Object { $_ -match 'antrea-agent-windows' -and $_ -match '\bRunning\b' })
+                Record-Result ($winPods.Count -gt 0) `
+                    "antrea-agent-windows pod Running" "count=$($winPods.Count)"
+            }
+            # Antrea CRDs — confirms operator installed cleanly
+            foreach ($crdName in @(
+                'networkpolicies.crd.antrea.io',
+                'clusternetworkpolicies.crd.antrea.io',
+                'traceflows.crd.antrea.io'
+            )) {
+                Invoke-KubectlRaw @('get', 'crd', $crdName) | Out-Null
+                Record-Result ($LASTEXITCODE -eq 0) "Antrea CRD registered: $crdName"
+            }
+        }
         default {
             # flannel / none — embedded, no separate pod to check
             $flannelPods = @(Invoke-KubectlRaw @('get', 'pods', '-n', 'kube-system',
@@ -804,7 +849,178 @@ spec:
 }
 
 # ---------------------------------------------------------------------------
-# 11. Hubble observability (cilium + flannel+cilium only)
+# 11. Antrea: antctl featuregates, NetworkPolicy enforcement, OVS bridge
+# ---------------------------------------------------------------------------
+
+# 11a. antctl — Antrea's own CLI, baked into the antrea-controller image.
+# Running 'antctl get featuregates' validates the control plane beyond pod Running:
+# it exercises the gRPC connection from antctl to the controller, confirms the
+# Feature Gate API is responding, and prints enabled/disabled gates.
+function Test-AntreaControlPlane {
+    Write-Step "=== 11a. Antrea control plane (antctl featuregates) ==="
+
+    $ctrlPodName = (Invoke-KubectlRaw @(
+        'get', 'pods', '-n', 'kube-system',
+        '-l', 'app=antrea,component=antrea-controller',
+        '-o', 'jsonpath={.items[0].metadata.name}'
+    ) 2>$null) -join ''
+
+    if (-not $ctrlPodName) {
+        Record-Result $false "antrea-controller pod found for antctl query"
+        return
+    }
+
+    Write-Step "  Running antctl get featuregates via pod '$ctrlPodName'..."
+    try {
+        $fgOut = Invoke-KubectlRaw @(
+            'exec', '-n', 'kube-system', $ctrlPodName, '--',
+            'antctl', 'get', 'featuregates'
+        ) 2>$null
+        $fgLines = @($fgOut | Where-Object { $_ -match 'Enabled|Disabled' })
+        Record-Result ($fgLines.Count -gt 0) `
+            "Antrea antctl featuregates responded" `
+            "gates=$($fgLines.Count) (e.g. $($fgLines[0].Trim()))"
+    } catch {
+        Record-Result $false "Antrea antctl featuregates" "$_"
+    }
+}
+
+# 11b. NetworkPolicy enforcement — unique to Antrea across all test scenarios.
+# Scenario:  create deny-all ingress → cross-pod ping must FAIL
+#            delete the policy    → same ping must SUCCEED
+# This proves the data plane actually enforces policy, not just routes packets.
+function Test-AntreaNetworkPolicy {
+    param([object[]]$Pods)
+    Write-Step "=== 11b. Antrea NetworkPolicy enforcement ==="
+
+    if (-not $Pods -or $Pods.Count -lt 2) {
+        Write-Step "  Need 2+ test pods for NetworkPolicy test — skipping"
+        return
+    }
+
+    # Pick two pods on different nodes for the test (same-node ping would bypass overlay)
+    $byNode = @{}
+    foreach ($p in $Pods) {
+        if (-not $byNode.ContainsKey($p.spec.nodeName)) { $byNode[$p.spec.nodeName] = $p }
+    }
+    $nodeList = @($byNode.Keys | Sort-Object)
+    if ($nodeList.Count -lt 2) {
+        Write-Step "  All test pods are on the same node — using same-node pair"
+        $srcPod = $Pods[0]; $dstPod = $Pods[1]
+    } else {
+        $srcPod = $byNode[$nodeList[0]]; $dstPod = $byNode[$nodeList[1]]
+    }
+    $srcName = $srcPod.metadata.name
+    $dstName = $dstPod.metadata.name
+    $dstIp   = $dstPod.status.podIP
+
+    Write-Step "  Pair: $srcName → $dstIp ($dstName)"
+
+    # Pre-check: ping should currently succeed
+    $prePing = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $srcName, '--',
+        'ping', '-c', '2', '-W', '2', $dstIp) 2>$null
+    $preOk = ($LASTEXITCODE -eq 0)
+    if (-not $preOk) {
+        Record-Result $false "NetworkPolicy pre-check: cross-pod ping reachable before deny" "ping failed before any policy"
+        return
+    }
+
+    # Apply deny-all ingress policy scoped to test namespace
+    $npYaml = @"
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: verify-deny-all-ingress
+  namespace: $TestNamespace
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+"@
+    $tmpNp = [System.IO.Path]::GetTempFileName() + '.yaml'
+    Set-Content -Path $tmpNp -Value $npYaml -Encoding UTF8
+    try {
+        Invoke-Kubectl @('apply', '-f', $tmpNp) | Out-Null
+    } finally {
+        Remove-Item $tmpNp -ErrorAction SilentlyContinue
+    }
+
+    # Give the agent a moment to program the flow table
+    Start-Sleep -Seconds 4
+
+    # Ping should now be BLOCKED
+    $denyPing = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $srcName, '--',
+        'ping', '-c', '2', '-W', '2', $dstIp) 2>$null
+    $denyOk = ($LASTEXITCODE -ne 0)   # we WANT the ping to fail
+    Record-Result $denyOk `
+        "NetworkPolicy deny-all ingress: cross-pod ping blocked" `
+        "$(if ($denyOk) { 'ping correctly failed (policy enforced)' } else { 'ping succeeded — policy NOT enforced' })"
+
+    # Remove the policy
+    Invoke-KubectlRaw @('delete', 'networkpolicy', 'verify-deny-all-ingress',
+        '-n', $TestNamespace, '--ignore-not-found') | Out-Null
+
+    Start-Sleep -Seconds 4
+
+    # Ping should succeed again
+    $allowPing = Invoke-KubectlRaw @('exec', '-n', $TestNamespace, $srcName, '--',
+        'ping', '-c', '2', '-W', '2', $dstIp) 2>$null
+    $allowOk = ($LASTEXITCODE -eq 0)
+    Record-Result $allowOk `
+        "NetworkPolicy allow-all (after deletion): cross-pod ping restored" `
+        "$(if ($allowOk) { 'ping restored correctly' } else { 'ping still fails after policy removal' })"
+}
+
+# 11c. OVS br-int bridge visible on Windows node via VMBus PSSession.
+# Verifies that containerized OVS wired up successfully — antrea-agent can be
+# Running even if OVS failed to install the bridge, so checking pod status
+# alone is insufficient.
+function Test-AntreaOVSWindows {
+    Write-Step "=== 11c. Antrea OVS bridge on Windows node(s) ==="
+
+    $winNodes = @(Get-AllWindowsNodeNames)
+    if ($winNodes.Count -eq 0) {
+        Write-Step "  No Windows nodes — skipping OVS bridge check"
+        return
+    }
+
+    $cred = New-Object PSCredential(
+        $script:WinAdminUser,
+        (ConvertTo-SecureString $script:WinAdminPass -AsPlainText -Force)
+    )
+
+    foreach ($nodeName in $winNodes) {
+        Write-Step "  Checking OVS bridge on '$nodeName' via VMBus PSSession..."
+        try {
+            $result = Invoke-Command -VMName $nodeName -Credential $cred -ErrorAction Stop -ScriptBlock {
+                $ovsBridges = @(
+                    Get-HnsNetwork -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -match 'antrea' }
+                )
+                $gw0 = Get-NetAdapter -ErrorAction SilentlyContinue |
+                    Where-Object { $_.Name -eq 'antrea-gw0' }
+                return @{
+                    AntreaHnsCount = $ovsBridges.Count
+                    HnsNames       = ($ovsBridges | ForEach-Object { $_.Name }) -join ', '
+                    Gw0Present     = ($null -ne $gw0)
+                    Gw0Status      = if ($gw0) { $gw0.Status } else { 'absent' }
+                }
+            }
+
+            Record-Result ($result.AntreaHnsCount -gt 0) `
+                "OVS: antrea HNS network present on '$nodeName'" `
+                "networks=[$($result.HnsNames)]"
+
+            Record-Result ($result.Gw0Present) `
+                "OVS: antrea-gw0 gateway adapter present on '$nodeName'" `
+                "status=$($result.Gw0Status)"
+        } catch {
+            Record-Result $false "OVS bridge check on '$nodeName' (VMBus session)" "$_"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
+# 12. Hubble observability (cilium + flannel+cilium only)
 # ---------------------------------------------------------------------------
 function Test-HubbleObservability {
     param([object[]]$Pods)
@@ -909,6 +1125,12 @@ function Invoke-Verify {
             # Hubble: must run after traffic is generated and before namespace cleanup
             if ($script:CNIPlugin -in @('cilium', 'flannel+cilium')) {
                 Test-HubbleObservability -Pods $pods
+            }
+            # Antrea-specific: antctl, NetworkPolicy enforcement, OVS bridge
+            if ($script:CNIPlugin -eq 'antrea') {
+                Test-AntreaControlPlane
+                Test-AntreaNetworkPolicy -Pods $pods
+                Test-AntreaOVSWindows
             }
         } else {
             Record-Result $false "Test pods scheduled" "no pods found in $TestNamespace"

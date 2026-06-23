@@ -1,13 +1,13 @@
 # =============================================================================
 # Run-AllScenarios.ps1
-# Orchestrator that runs all (or a subset of) scenarios A–E end-to-end.
+# Orchestrator that runs all (or a subset of) scenarios A–F end-to-end.
 #
 # Each scenario script handles its own teardown at startup (VMs + sentinels +
 # output files). Downloaded ISOs and Packer golden base VHDXs are always
 # preserved between runs (-KeepBaseImages is the default in every scenario).
 #
 # USAGE (elevated shell):
-#   .\Run-AllScenarios.ps1                         # run A B C D E
+#   .\Run-AllScenarios.ps1                         # run A B C D E F
 #   .\Run-AllScenarios.ps1 -Scenarios A,C,E        # subset
 #   .\Run-AllScenarios.ps1 -NoExtraWorker          # 1 Linux worker per scenario
 #   .\Run-AllScenarios.ps1 -CleanupAfterAll        # tear down after last scenario
@@ -18,9 +18,9 @@
 
 [CmdletBinding()]
 param(
-    # Which scenarios to run, in order. Valid values: A B C D E
-    [ValidateSet('A','B','C','D','E')]
-    [string[]]$Scenarios = @('A','B','C','D','E'),
+    # Which scenarios to run, in order. Valid values: A B C D E F
+    [ValidateSet('A','B','C','D','E','F')]
+    [string[]]$Scenarios = @('A','B','C','D','E','F'),
 
     # Pass -NoExtraWorker to each scenario (use 1 Linux worker instead of 2)
     [switch]$NoExtraWorker,
@@ -62,6 +62,7 @@ $ScenarioMap = [ordered]@{
     C = 'Run-ScenarioC.ps1'
     D = 'Run-ScenarioD.ps1'
     E = 'Run-ScenarioE.ps1'
+    F = 'Run-ScenarioF.ps1'
 }
 
 # Validate all requested scenarios have a script
