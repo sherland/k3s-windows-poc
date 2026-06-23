@@ -1,0 +1,45 @@
+# Antrea Helm values for k3s on Hyper-V (Linux CP + Linux workers + Windows workers)
+# Used by Apply-CNI.ps1 when CNIPlugin = 'antrea'.
+#
+# Helm repo: https://charts.antrea.io
+# Chart: antrea/antrea
+#
+# k3s notes:
+#   - Run k3s with --flannel-backend=none --disable-network-policy (handled by Bootstrap-ControlPlane.ps1)
+#   - k3s creates a symlink /etc/cni/net.d -> /var/lib/rancher/k3s/agent/etc/cni/net.d
+#     so Antrea's default CNI conf path works transparently.
+#   - k3s kubelet also scans /opt/cni/bin (the Antrea default), so no cni.hostBinPath override needed.
+#   - k3s provides per-node PodCIDR via --cluster-cidr; nodeIPAM is already disabled by default.
+#
+# Windows notes:
+#   - Windows nodes use antrea-windows-with-ovs.yml (containerized OVS, HostProcess Containers).
+#   - That manifest is downloaded and patched by Apply-CNI.ps1 at deploy time.
+#   - Only the Linux antrea-agent DaemonSet is controlled by this values file.
+
+# Traffic encapsulation — encap is the default and safest choice.
+# VXLAN is used instead of the default Geneve because Windows HNS on WS2022 supports VXLAN
+# natively. Geneve is NOT supported on Windows containers/HNS.
+trafficEncapMode: "encap"
+tunnelType: "vxlan"
+
+# Disable AntreaProxy service health check server to avoid race conditions with kube-proxy.
+# k3s embeds kube-proxy on Linux nodes; Antrea replaces it only on Windows (via proxyAll in
+# the Windows DaemonSet). Both would try to bind the same health check port otherwise.
+antreaProxy:
+  disableServiceHealthCheckServer: true
+
+# nodeIPAM is disabled by default (false). k3s allocates per-node PodCIDRs via
+# --cluster-cidr. Antrea must not attempt to re-allocate them.
+nodeIPAM:
+  enable: false
+
+# Linux-only node selector — Windows antrea-agent is deployed separately via
+# antrea-windows-with-ovs.yml which uses its own nodeSelector/os constraints.
+agent:
+  nodeSelector:
+    kubernetes.io/os: linux
+
+# Single controller replica is sufficient for a small lab cluster.
+controller:
+  nodeSelector:
+    kubernetes.io/os: linux

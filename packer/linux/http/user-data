@@ -36,7 +36,7 @@ autoinstall:
   ssh:
     allow-pw: true
     authorized-keys:
-      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuOpJ9lehjxQ1Zn+YaAkSSqZ5qKq+zxjtnaAb4mJQ5N packer-linux-build
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC6Gz+RvjIAcu/e4xq/x1jxOn1IndY6+8iDN9qabbvjR packer-linux-build
     install-server: true
   storage:
     layout:
@@ -55,7 +55,7 @@ autoinstall:
         sudo: ALL=(ALL) NOPASSWD:ALL
         # SSH public key injected by Build-LinuxVM.ps1 from the ephemeral keypair
         ssh_authorized_keys:
-          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMuOpJ9lehjxQ1Zn+YaAkSSqZ5qKq+zxjtnaAb4mJQ5N packer-linux-build
+          - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIC6Gz+RvjIAcu/e4xq/x1jxOn1IndY6+8iDN9qabbvjR packer-linux-build
   late-commands:
     # Install Hyper-V cloud tools so hv_kvp_daemon runs at boot.
     # This daemon is required for Packer to discover the VM's IP address via the Hyper-V KVP channel.

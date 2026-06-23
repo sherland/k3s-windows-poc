@@ -167,7 +167,7 @@ function Invoke-Phase {
         7 {
             # For Cilium: apply CNI (Phase 8) before joining workers (Phase 7)
             # because nodes stay NotReady until Cilium provides networking.
-            if ($script:CNIPlugin -in @('cilium', 'calico') -and $PhaseNum -eq 7) {
+            if ($script:CNIPlugin -in @('cilium', 'calico', 'antrea') -and $PhaseNum -eq 7) {
                 & "$ScriptDir\Apply-CNI.ps1" -Force:$Forced
                 if ($LASTEXITCODE -ne 0) { throw "Apply-CNI ($($script:CNIPlugin) pre-join) failed" }
             }
@@ -178,9 +178,9 @@ function Invoke-Phase {
             }
         }
         8 {
-            # For Cilium/Calico, CNI was already applied in Phase 7 — skip duplicate run.
-            if ($script:CNIPlugin -in @('cilium', 'calico')) {
-                Write-Host "  [SKIP] Phase 8 ($($script:CNIPlugin) CNI already applied in Phase 7 pre-join step)" -ForegroundColor Gray
+            # For Cilium/Calico/Antrea, CNI was already applied in Phase 7 — skip duplicate run.
+            if ($script:CNIPlugin -in @('cilium', 'calico', 'antrea')) {
+                Write-Host "  [SKIP] Phase 8 ($($script:CNIPlugin) CNI already applied in Phase 7 pre-join step — no duplicate apply needed)" -ForegroundColor Gray
             } else {
                 & "$ScriptDir\Apply-CNI.ps1" -Force:$Forced
             }

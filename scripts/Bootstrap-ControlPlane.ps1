@@ -91,7 +91,7 @@ function Invoke-K3sServerBootstrap {
     Write-Step "Running k3s server bootstrap on CP (may take ~5 minutes)..."
     # Cilium and Calico replace k3s embedded flannel — pass 'none' so k3s starts with --flannel-backend=none.
     # All other CNI plugins (flannel, multus, none) keep the configured FlannelBackend (host-gw).
-    $flannelBackend = if ($script:CNIPlugin -in @('cilium', 'calico')) { 'none' } else { $script:FlannelBackend }
+    $flannelBackend = if ($script:CNIPlugin -in @('cilium', 'calico', 'antrea')) { 'none' } else { $script:FlannelBackend }
     Invoke-SshCommand -HostIp $CpIp -User $LinuxUser -KeyPath $SshKey `
         -Command "sudo K3S_VERSION='$($script:K3sVersion)' INSTALL_K3S_SKIP_DOWNLOAD=true FLANNEL_BACKEND='$flannelBackend' bash /tmp/02-k3s-server.sh"
 
@@ -127,14 +127,20 @@ function Get-ClusterCredentials {
     Set-Content -Path $kcPath -Value $kubeconfigStr -NoNewline
     Write-Success "Admin kubeconfig retrieved → $kcPath"
 
-    # Flannel ServiceAccount kubeconfig
-    $rawFlannel = Invoke-SshCommand -HostIp $CpIp -User $LinuxUser -KeyPath $SshKey `
-        -Command 'sudo cat /var/lib/rancher/k3s/server/flannel-kubeconfig.yaml' -PassThru
-    $flannelStr = (($rawFlannel | Where-Object { $_ -is [string] }) -join "`n").Trim()
-    Assert-True ($flannelStr.Length -ge 100) "Flannel kubeconfig appears invalid"
-    $flannelPath = Join-Path $script:OutputDir 'flannel-kubeconfig.yaml'
-    Set-Content -Path $flannelPath -Value $flannelStr -NoNewline
-    Write-Success "Flannel kubeconfig retrieved → $flannelPath"
+    # Flannel ServiceAccount kubeconfig — only created when Flannel is the CNI
+    # (i.e. FLANNEL_BACKEND != none). Skipped for Antrea, Cilium, Calico.
+    $flannelStr = ''
+    if ($script:CNIPlugin -notin @('cilium', 'calico', 'antrea')) {
+        $rawFlannel = Invoke-SshCommand -HostIp $CpIp -User $LinuxUser -KeyPath $SshKey `
+            -Command 'sudo cat /var/lib/rancher/k3s/server/flannel-kubeconfig.yaml' -PassThru
+        $flannelStr = (($rawFlannel | Where-Object { $_ -is [string] }) -join "`n").Trim()
+        Assert-True ($flannelStr.Length -ge 100) "Flannel kubeconfig appears invalid"
+        $flannelPath = Join-Path $script:OutputDir 'flannel-kubeconfig.yaml'
+        Set-Content -Path $flannelPath -Value $flannelStr -NoNewline
+        Write-Success "Flannel kubeconfig retrieved → $flannelPath"
+    } else {
+        Write-Step "  Skipping flannel-kubeconfig (CNI=$($script:CNIPlugin) — no Flannel ServiceAccount token)"
+    }
 
     return @{
         Token            = $token

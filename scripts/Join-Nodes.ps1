@@ -175,18 +175,184 @@ function Inject-WindowsNodeConfig {
 
         $cfgPath = "${driveLetter}:\k8s-node-config.json"
         $cfg = [ordered]@{
-            hostname            = $NodeName
-            k3sServerIP         = $CpIp
-            nodeToken           = $Token
-            osVersion           = $OSVersion
-            kubeconfigB64       = $KubeconfigB64
+            hostname             = $NodeName
+            k3sServerIP          = $CpIp
+            nodeToken            = $Token
+            osVersion            = $OSVersion
+            kubeconfigB64        = $KubeconfigB64
             flannelKubeconfigB64 = $FlannelKcB64
-            clusterDNS          = $script:ClusterDnsIp
-            clusterCIDR         = $script:ClusterCidr
-            serviceCIDR         = $script:ServiceCidr
+            cniPlugin            = $script:CNIPlugin
+            antreaVersion        = $script:AntreaVersion
+            clusterDNS           = $script:ClusterDnsIp
+            clusterCIDR          = $script:ClusterCidr
+            serviceCIDR          = $script:ServiceCidr
         }
         $cfg | ConvertTo-Json -Depth 5 | Set-Content -Path $cfgPath -Encoding UTF8
         Write-Success "k8s-node-config.json written to ${driveLetter}:\"
+
+        # ---------------------------------------------------------------------------
+        # For Antrea: patch k8s-firstboot.ps1 on the VHDX to inject the Antrea setup
+        # block. The base image was built before the Antrea support was added to
+        # 05-firstboot-setup.ps1, so the baked-in script doesn't know about Antrea.
+        # We patch the script in the differencing disk here so we don't need to
+        # rebuild the base image for every Antrea scenario run.
+        # ---------------------------------------------------------------------------
+        if ($script:CNIPlugin -eq 'antrea') {
+            $fbPath = "${driveLetter}:\k8s-firstboot.ps1"
+            if (Test-Path $fbPath) {
+                $fbContent = Get-Content $fbPath -Raw
+                # Only inject if the block isn't already there (idempotent)
+                if ($fbContent -notmatch 'CNI-specific first-boot setup \(Antrea\)') {
+                    $antreaBlock = @'
+
+# ---------------------------------------------------------------------------
+# CNI-specific first-boot setup (Antrea)
+# ---------------------------------------------------------------------------
+if ($cfg.PSObject.Properties['cniPlugin'] -and $cfg.cniPlugin -eq 'antrea') {
+    FbLog 'k8s-firstboot: CNI=antrea — configuring Windows node for Antrea/OVS...'
+
+    # Remove Flannel scheduled tasks baked into the base image.
+    # Flannel tasks (StartNetwork + StartKubeProxy) would conflict with Antrea/OVS.
+    Unregister-ScheduledTask -TaskName 'StartNetwork'   -Confirm:$false -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName 'StartKubeProxy' -Confirm:$false -ErrorAction SilentlyContinue
+    FbLog 'k8s-firstboot: Flannel StartNetwork + StartKubeProxy tasks removed'
+
+    # Antrea requires Windows Firewall to be disabled on each node.
+    Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
+    FbLog 'k8s-firstboot: Windows Firewall disabled'
+
+    # Enable test-signed kernel drivers.
+    # The Antrea containerized OVS kernel driver (from antrea-windows-with-ovs.yml) is
+    # test-signed. TESTSIGNING must be ON before the driver is installed.
+    # This takes effect on next boot — which IS the rename/reboot happening below.
+    Bcdedit.exe /set TESTSIGNING ON | Out-Null
+    FbLog 'k8s-firstboot: TESTSIGNING ON set (active after reboot)'
+
+    # Enable Hyper-V PowerShell management tools.
+    # antrea-agent on Windows calls Get-VMNetworkAdapter (in the Hyper-V PS module) to
+    # look up the vNIC MAC address after OVS creates the Transparent HNS bridge.
+    # Without this module the agent FAILs with "Get-VMNetworkAdapter is not recognized".
+    # Microsoft-Hyper-V is already enabled (installed for container networking).
+    # RSAT-Hyper-V-Tools-Feature is the parent of Hyper-V-Management-PowerShell.
+    FbLog 'k8s-firstboot: enabling RSAT-Hyper-V-Tools-Feature + Hyper-V-Management-PowerShell'
+    Enable-WindowsOptionalFeature -Online -FeatureName RSAT-Hyper-V-Tools-Feature -All -NoRestart -ErrorAction SilentlyContinue | Out-Null
+    Enable-WindowsOptionalFeature -Online -FeatureName Microsoft-Hyper-V-Management-PowerShell -NoRestart -ErrorAction SilentlyContinue | Out-Null
+    FbLog 'k8s-firstboot: Hyper-V PowerShell module enabled'
+
+    # Create Antrea helper directory and download version-matched scripts.
+    $AntreaDir = 'C:\k\antrea'
+    $null = New-Item -ItemType Directory -Force -Path $AntreaDir
+    $AntreaVersion = if ($cfg.PSObject.Properties['antreaVersion'] -and $cfg.antreaVersion) { $cfg.antreaVersion } else { '2.6.2' }
+    $AntreaTag = "v${AntreaVersion}"
+    foreach ($HelperScript in @('Prepare-AntreaAgent.ps1', 'Clean-AntreaNetwork.ps1')) {
+        $ScriptUrl = "https://raw.githubusercontent.com/antrea-io/antrea/${AntreaTag}/hack/windows/${HelperScript}"
+        FbLog "k8s-firstboot: downloading ${HelperScript} from ${ScriptUrl}"
+        try {
+            Invoke-WebRequest -Uri $ScriptUrl -OutFile "${AntreaDir}\${HelperScript}" -UseBasicParsing -ErrorAction Stop
+            FbLog "k8s-firstboot: ${HelperScript} downloaded OK"
+        } catch {
+            FbLog "k8s-firstboot: WARNING - failed to download ${HelperScript}: ${_}"
+        }
+    }
+
+    # Register PrepareAntreaAgent as a persistent AtStartup scheduled task.
+    # Runs at every boot (not just first boot) to clean stale OVS bridge / HNS networks
+    # before the antrea-agent HostProcess Container starts.
+    # -RunOVSServices $false because OVS runs containerized inside the HostProcess Container.
+    Unregister-ScheduledTask -TaskName 'PrepareAntreaAgent' -Confirm:$false -ErrorAction SilentlyContinue
+    $PrepAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument '-NonInteractive -ExecutionPolicy Bypass -File C:\k\antrea\Prepare-AntreaAgent.ps1 -RunOVSServices $false'
+    $PrepTrigger   = New-ScheduledTaskTrigger -AtStartup
+    $PrepSettings  = New-ScheduledTaskSettingsSet `
+        -MultipleInstances IgnoreNew `
+        -ExecutionTimeLimit (New-TimeSpan -Minutes 10)
+    $PrepPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Register-ScheduledTask -TaskName 'PrepareAntreaAgent' `
+        -Action $PrepAction -Trigger $PrepTrigger `
+        -Settings $PrepSettings -Principal $PrepPrincipal -Force | Out-Null
+    FbLog 'k8s-firstboot: PrepareAntreaAgent AtStartup task registered'
+
+    # Fix containerd CNI config path.
+    # containerd reads CNI config from C:\k\cni\config (set in config.toml).
+    # The Flannel firstboot leaves a 10-flannel.conflist (sdnbridge) there which
+    # takes precedence over the Antrea config installed by the install-cni init
+    # container (which writes to C:\etc\cni\net.d, kubelet's default path).
+    # We must: (1) remove the Flannel config, (2) write the Antrea config to
+    # C:\k\cni\config without a BOM (containerd rejects BOM-prefixed JSON).
+    FbLog 'k8s-firstboot: fixing containerd CNI config path'
+    Remove-Item 'C:\k\cni\config\10-flannel.conflist' -Force -ErrorAction SilentlyContinue
+    # The Antrea install-cni init container writes to C:\etc\cni\net.d after first
+    # boot. At firstboot time the file may not exist yet — we create a placeholder
+    # that will be replaced. A startup script copies it after antrea-agent starts.
+    # Register a helper to copy the Antrea CNI config on each boot after agent starts.
+    # NOTE: Must NOT use a nested here-string here — this code is inside the outer
+    # $antreaBlock single-quoted here-string (@'...'@). A nested @'...'@ would
+    # terminate the outer here-string when its closing '@ appears at column 0.
+    # Use Set-Content with an array of literals instead (''...'' = escaped single quote).
+    $null = New-Item -Force -Path 'C:\k\antrea\Fix-CniConfigPath.ps1' -ItemType File
+    Set-Content 'C:\k\antrea\Fix-CniConfigPath.ps1' @(
+        '# Wait for Antrea install-cni to write the config',
+        'for ($i=0; $i -lt 60; $i++) {',
+        '    $src = ''C:\etc\cni\net.d\10-antrea.conflist''',
+        '    $dst = ''C:\k\cni\config\10-antrea.conflist''',
+        '    if ((Test-Path $src) -and -not (Test-Path $dst)) {',
+        '        $null = New-Item -ItemType Directory -Force -Path ''C:\k\cni\config''',
+        '        $bytes = [System.IO.File]::ReadAllBytes($src)',
+        '        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {',
+        '            $bytes = $bytes[3..($bytes.Length-1)]',
+        '        }',
+        '        [System.IO.File]::WriteAllBytes($dst, $bytes)',
+        '        # Also copy the antrea.exe binary: install-cni puts it in C:\opt\cni\bin\ but',
+        '        # containerd looks in C:\k\cni\ (bin_dir in C:\containerd\config\config.toml).',
+        '        Copy-Item ''C:\opt\cni\bin\antrea.exe'' ''C:\k\cni\antrea.exe'' -Force -ErrorAction SilentlyContinue',
+        '        Restart-Service containerd -ErrorAction SilentlyContinue',
+        '        break',
+        '    }',
+        '    Start-Sleep 5',
+        '}'
+    ) -Encoding ASCII
+    $CniAction    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+        -Argument '-NonInteractive -ExecutionPolicy Bypass -File C:\k\antrea\Fix-CniConfigPath.ps1'
+    $CniTrigger   = New-ScheduledTaskTrigger -AtStartup
+    $CniSettings  = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
+    $CniPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+    Unregister-ScheduledTask -TaskName 'FixAntreaCniPath' -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName 'FixAntreaCniPath' `
+        -Action $CniAction -Trigger $CniTrigger `
+        -Settings $CniSettings -Principal $CniPrincipal -Force | Out-Null
+    FbLog 'k8s-firstboot: FixAntreaCniPath AtStartup task registered'
+}
+
+'@
+                    # Insert the Antrea block before the "Clean up" section
+                    $injectionPoint = "# ---------------------------------------------------------------------------`r`n# Clean up"
+                    if ($fbContent -notmatch [regex]::Escape($injectionPoint)) {
+                        $injectionPoint = "# ---------------------------------------------------------------------------`n# Clean up"
+                    }
+                    # IMPORTANT: use [regex]::Replace with a MatchEvaluator scriptblock instead of
+                    # -replace, because $antreaBlock contains ${AntreaTag}, ${HelperScript}, ${_} etc.
+                    # .NET regex replacement syntax interprets ${name} as a named capture group reference
+                    # and $_ as "entire input" — all would be substituted incorrectly (empty string or
+                    # the whole file content). The MatchEvaluator returns the string directly, bypassing
+                    # .NET replacement syntax entirely.
+                    $capturedAntreaBlock = $antreaBlock
+                    $capturedInjectionPoint = $injectionPoint
+                    $fbContent = [regex]::Replace(
+                        $fbContent,
+                        [regex]::Escape($injectionPoint),
+                        [System.Text.RegularExpressions.MatchEvaluator]{
+                            param($m); $capturedAntreaBlock + $capturedInjectionPoint
+                        }
+                    )
+                    [System.IO.File]::WriteAllText($fbPath, $fbContent, [System.Text.Encoding]::UTF8)
+                    Write-Success "k8s-firstboot.ps1 patched with Antrea setup block on ${driveLetter}:\"
+                } else {
+                    Write-Step "  k8s-firstboot.ps1 already has Antrea block — skipping patch"
+                }
+            } else {
+                Write-Step "  WARNING: k8s-firstboot.ps1 not found at $fbPath — Antrea setup block not injected"
+            }
+        }
     } finally {
         Dismount-VHD -Path $NodeVhdxPath
     }
@@ -359,19 +525,35 @@ foreach ($name in $allLinux) {
 # --- Windows workers ---
 $osMap = Get-WindowsNodeOSMap
 if ($osMap.Count -gt 0) {
-    # Load kubeconfig B64 and flannel kubeconfig B64 from files saved in Phase 6
+    # Load kubeconfig B64 and (optionally) flannel kubeconfig B64 from files saved in Phase 6.
+    # flannel-kubeconfig.yaml is only present for Flannel-based CNIs (not Antrea/Cilium/Calico).
     Assert-True (Test-Path $AdminKcPath) "Admin kubeconfig not found at $AdminKcPath"
-    Assert-True (Test-Path $FlannelKcPath) "Flannel kubeconfig not found at $FlannelKcPath"
-
     $kubeconfigStr = Get-Content $AdminKcPath -Raw
-    $flannelStr    = Get-Content $FlannelKcPath -Raw
     $kcB64         = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($kubeconfigStr))
-    $flannelB64    = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($flannelStr))
+
+    $flannelB64 = ''
+    if ($script:CNIPlugin -notin @('cilium', 'calico', 'antrea') -and (Test-Path $FlannelKcPath)) {
+        $flannelStr = Get-Content $FlannelKcPath -Raw
+        $flannelB64 = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($flannelStr))
+    }
 
     foreach ($name in $osMap.Keys | Sort-Object) {
         $spec = $osMap[$name]
         Join-WindowsWorker -NodeName $name -OSVersion $spec.OSVersion `
             -CpIp $cpIp -Token $token -KubeconfigB64 $kcB64 -FlannelKcB64 $flannelB64
+    }
+
+    # For Antrea: wait for antrea-agent-windows pods to reach Running after all Windows nodes
+    # have joined. OVS kernel driver installation inside the HostProcess Container takes 1–3 min.
+    if ($script:CNIPlugin -eq 'antrea') {
+        $winCount = $osMap.Count
+        Wait-Until -TimeoutSec 600 -PollSec 15 -Description 'antrea-agent-windows pods Running' -Condition {
+            $pods = @(kubectl get pods -n kube-system --no-headers 2>$null |
+                Where-Object { $_ -match 'antrea-agent-windows' -and $_ -match '\bRunning\b' })
+            Write-Step "  antrea-agent-windows pods Running: $($pods.Count)/$winCount"
+            return ($pods.Count -ge $winCount)
+        }
+        Write-Success "antrea-agent-windows pods Running on all $winCount Windows node(s)"
     }
 }
 

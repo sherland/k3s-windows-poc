@@ -43,20 +43,28 @@ while true; do
     sleep 5
 done
 
-echo "==> 02-k3s-server: Waiting for node to report Ready..."
-deadline=$((SECONDS + INSTALL_TIMEOUT))
-while true; do
-    ready=$(k3s kubectl get nodes --no-headers 2>/dev/null | grep -c 'Ready' || echo '0')
-    if [ "$ready" -ge 1 ]; then
-        break
-    fi
-    if [ $SECONDS -ge $deadline ]; then
-        echo "ERROR: Node did not report Ready within ${INSTALL_TIMEOUT}s"
-        k3s kubectl get nodes 2>/dev/null || true
-        exit 1
-    fi
-    sleep 5
-done
+if [ "${FLANNEL_BACKEND:-host-gw}" = "none" ]; then
+    # With FLANNEL_BACKEND=none the CP node stays NotReady until an external CNI
+    # (Antrea, Cilium, Calico) is installed by the orchestrator in Phase 7/8.
+    # Waiting here would always time out — just verify the API server is up.
+    echo "==> 02-k3s-server: FLANNEL_BACKEND=none — node will become Ready after CNI install (skipping Ready wait)"
+    k3s kubectl get nodes 2>/dev/null || true
+else
+    echo "==> 02-k3s-server: Waiting for node to report Ready..."
+    deadline=$((SECONDS + INSTALL_TIMEOUT))
+    while true; do
+        ready=$(k3s kubectl get nodes --no-headers 2>/dev/null | awk '$2=="Ready"{c++} END{print c+0}')
+        if [ "$ready" -ge 1 ]; then
+            break
+        fi
+        if [ $SECONDS -ge $deadline ]; then
+            echo "ERROR: Node did not report Ready within ${INSTALL_TIMEOUT}s"
+            k3s kubectl get nodes 2>/dev/null || true
+            exit 1
+        fi
+        sleep 5
+    done
+fi
 
 echo "==> 02-k3s-server: k3s server is Ready"
 k3s kubectl get nodes
@@ -66,7 +74,11 @@ systemctl enable k3s
 
 # ---------------------------------------------------------------------------
 # Prepare Kubernetes resources needed by Windows worker nodes
+# Only needed when Flannel is the CNI (host-gw mode for Windows flanneld.exe).
+# Skipped for Antrea, Cilium, and Calico which manage their own Windows networking.
 # ---------------------------------------------------------------------------
+
+if [ "${FLANNEL_BACKEND:-host-gw}" != "none" ]; then
 
 echo "==> 02-k3s-server: Creating kube-flannel namespace, RBAC, and ConfigMap"
 # Windows workers run their own flanneld.exe as a Windows service (host-gw mode).
@@ -212,10 +224,13 @@ KUBECONF
 chmod 600 /var/lib/rancher/k3s/server/flannel-kubeconfig.yaml
 echo "==> 02-k3s-server: flannel-kubeconfig.yaml written"
 
+fi  # end: FLANNEL_BACKEND != none
+
 echo "==> 02-k3s-server: Creating kubelet CSR auto-approve RBAC for Windows nodes"
 # Allow nodes in the system:bootstrappers group to have their CSRs auto-approved.
 # Windows kubelet uses --bootstrap-kubeconfig for initial cert request.
-# (Also enables cert rotation for all nodes.)
+# Also enables cert rotation for all nodes (system:nodes group).
+# Applied unconditionally — Windows nodes need this regardless of CNI plugin.
 k3s kubectl apply -f - << 'RBAC_EOF'
 ---
 apiVersion: rbac.authorization.k8s.io/v1
