@@ -11,7 +11,7 @@
 #   4b. Multus agent pod restart counts (detects crash loops the DS ready check misses)
 #   4c. network-status annotation structural validation (name format, interface, ips fields)
 #   4d. Antrea: antrea-controller, antrea-agent DS, antrea-agent-windows pods,
-#       Antrea CRDs present, antctl featuregates, NetworkPolicy deny/allow round-trip,
+#       Antrea CRDs present, antctl featuregates,
 #       OVS br-int bridge visible on Windows node (VXLAN mode)
 #   5.  Storage provisioner: local-path StorageClass + provisioner pod + PVC lifecycle test
 #   6.  Deploy a test DaemonSet (alpine, linux nodeSelector)
@@ -21,7 +21,8 @@
 #   9.  DNS resolution inside pods (nslookup kubernetes.default.svc.cluster.local)
 #  10.  ClusterIP service reachability (curl to service IP)
 #  11.  Hubble flow observability (cilium + flannel+cilium only): relay/UI ready, flows captured
-#  12.  Antrea: antctl featuregates, NetworkPolicy enforcement, OVS bridge on Windows
+#  11b. NetworkPolicy deny/allow round-trip — cilium, flannel+cilium, calico, antrea only
+#  12.  Antrea: antctl featuregates, OVS bridge on Windows
 #  13.  Windows node check (if any): kubelet Running, node labeled, pause pod schedules
 #  14.  Clean up test namespace
 #  15.  Print pass/fail summary with timing
@@ -849,7 +850,7 @@ spec:
 }
 
 # ---------------------------------------------------------------------------
-# 11. Antrea: antctl featuregates, NetworkPolicy enforcement, OVS bridge
+# 11/12. CNI-specific extended checks
 # ---------------------------------------------------------------------------
 
 # 11a. antctl — Antrea's own CLI, baked into the antrea-controller image.
@@ -885,13 +886,14 @@ function Test-AntreaControlPlane {
     }
 }
 
-# 11b. NetworkPolicy enforcement — unique to Antrea across all test scenarios.
+# NetworkPolicy enforcement — for CNIs with dedicated enforcement.
 # Scenario:  create deny-all ingress → cross-pod ping must FAIL
 #            delete the policy    → same ping must SUCCEED
 # This proves the data plane actually enforces policy, not just routes packets.
-function Test-AntreaNetworkPolicy {
+# Called only for cilium, flannel+cilium, calico, antrea.
+function Test-NetworkPolicyEnforcement {
     param([object[]]$Pods)
-    Write-Step "=== 11b. Antrea NetworkPolicy enforcement ==="
+    Write-Step "=== NetworkPolicy enforcement (deny/allow round-trip) ==="
 
     if (-not $Pods -or $Pods.Count -lt 2) {
         Write-Step "  Need 2+ test pods for NetworkPolicy test — skipping"
@@ -1120,16 +1122,25 @@ function Invoke-Verify {
         $pods = Wait-TestPodsReady
 
         if ($pods -and $pods.Count -gt 0) {
-            Test-CrossNodeConnectivity -Pods $pods
-            Test-ClusterIPService      -Pods $pods
+            Test-CrossNodeConnectivity    -Pods $pods
+            Test-ClusterIPService          -Pods $pods
             # Hubble: must run after traffic is generated and before namespace cleanup
             if ($script:CNIPlugin -in @('cilium', 'flannel+cilium')) {
                 Test-HubbleObservability -Pods $pods
             }
-            # Antrea-specific: antctl, NetworkPolicy enforcement, OVS bridge
+            # NetworkPolicy deny/allow round-trip.
+            # Only for CNIs with dedicated NetworkPolicy enforcement:
+            #   cilium / flannel+cilium: eBPF enforcement
+            #   calico: iptables/eBPF via tigera-operator
+            #   antrea: OVS flow-table enforcement
+            # Skipped for flannel and multus: Flannel (host-gw) does not enforce
+            # NetworkPolicy natively; k3s's embedded NP controller is not tested here.
+            if ($script:CNIPlugin -in @('cilium', 'flannel+cilium', 'calico', 'antrea')) {
+                Test-NetworkPolicyEnforcement -Pods $pods
+            }
+            # Antrea-specific: antctl featuregates + OVS bridge on Windows
             if ($script:CNIPlugin -eq 'antrea') {
                 Test-AntreaControlPlane
-                Test-AntreaNetworkPolicy -Pods $pods
                 Test-AntreaOVSWindows
             }
         } else {
