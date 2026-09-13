@@ -81,7 +81,7 @@ function Test-WindowsIsoValid {
         $driveLetter = ($mount | Get-Volume -ErrorAction Stop).DriveLetter
         $wimPath = "${driveLetter}:\sources\install.wim"
         if (-not (Test-Path $wimPath)) { return $false }
-        $images = Get-WindowsImage -ImagePath $wimPath -ErrorAction Stop
+        $images = @(Get-WindowsImage -ImagePath $wimPath -ErrorAction Stop)
         return ($images.Count -gt 0)
     } catch {
         return $false

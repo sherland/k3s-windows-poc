@@ -118,10 +118,10 @@ function Assert-Phase0Complete {
 
 # ---------------------------------------------------------------------------
 function Assert-NoCrlfShellScripts {
-    $shFiles = Get-ChildItem -Path $script:RepoRoot -Filter '*.sh' -Recurse -File
-    $crlfFiles = $shFiles | Where-Object {
+    $shFiles = @(Get-ChildItem -Path $script:RepoRoot -Filter '*.sh' -Recurse -File)
+    $crlfFiles = @($shFiles | Where-Object {
         (Get-Content -Raw -LiteralPath $_.FullName) -match "`r`n"
-    }
+    })
     if ($crlfFiles.Count -gt 0) {
         $list = ($crlfFiles | ForEach-Object { $_.FullName.Replace("$script:RepoRoot\", '') }) -join "`n    "
         throw "CRLF line endings found in shell script(s) — this breaks bash execution " +
