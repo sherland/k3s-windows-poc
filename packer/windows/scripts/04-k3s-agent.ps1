@@ -12,7 +12,7 @@
 # for flanneld so it only has node-read permissions.
 #
 # Environment variables injected by Packer:
-#   K8S_VERSION            - e.g. v1.32.5  (k3s version with +k3sN suffix stripped)
+#   K8S_VERSION            - e.g. v1.35.8  (k3s version with +k3sN suffix stripped)
 #   K3S_SERVER_IP          - IP of the Linux VM running k3s
 #   KUBECONFIG_B64         - base64(k3s admin kubeconfig, server IP already patched)
 #   FLANNEL_KUBECONFIG_B64 - base64(flannel ServiceAccount kubeconfig)

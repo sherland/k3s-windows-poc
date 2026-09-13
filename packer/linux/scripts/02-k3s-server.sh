@@ -3,12 +3,12 @@
 # packer/linux/scripts/02-k3s-server.sh
 # Install k3s as a server (control-plane + Linux worker node).
 # Environment variables injected by Packer:
-#   K3S_VERSION  — e.g. v1.32.5+k3s1
+#   K3S_VERSION  — e.g. v1.35.8+k3s1
 # =============================================================================
 
 set -euo pipefail
 
-K3S_VERSION="${K3S_VERSION:-v1.32.5+k3s1}"
+K3S_VERSION="${K3S_VERSION:-v1.35.8+k3s1}"
 INSTALL_TIMEOUT=300   # seconds
 
 echo "==> 02-k3s-server: Installing k3s ${K3S_VERSION}"

@@ -18,7 +18,7 @@
 # Those are done at first boot by C:\k8s-firstboot.ps1 (see 05-firstboot-setup.ps1).
 #
 # Environment variables injected by Packer:
-#   K8S_VERSION       - e.g. v1.32.5
+#   K8S_VERSION       - e.g. v1.35.8
 #   CLUSTER_DNS_IP    - CoreDNS cluster IP   (default: 10.43.0.10)
 #   CLUSTER_CIDR      - Pod CIDR             (default: 10.42.0.0/16)
 #   SERVICE_CIDR      - Service CIDR         (default: 10.43.0.0/16)
