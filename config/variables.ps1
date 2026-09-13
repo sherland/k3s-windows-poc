@@ -76,7 +76,7 @@ $script:MultusVersion     = 'v4.3.1'    # multus-cni meta-plugin (Linux only)
 $script:CniPluginsVersion = 'v1.9.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)
 $script:CiliumVersion     = '1.20.1'    # Cilium CNI (Linux only; latest stable)
 $script:CalicoVersion     = 'v3.32.2'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
-$script:AntreaVersion     = '2.6.2'     # Antrea CNI via Helm chart (Linux + Windows; latest stable)
+$script:AntreaVersion     = '2.7.0'     # Antrea CNI via Helm chart (Linux + Windows; latest stable)
 $script:PackerWingetId    = 'Hashicorp.Packer'
 $script:KubectlWingetId   = 'Kubernetes.kubectl'
 
