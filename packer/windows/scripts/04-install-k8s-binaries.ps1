@@ -134,7 +134,7 @@ if (-not (Test-Path $HnsPsmPath)) {
 # host-local IPAM from containernetworking/plugins
 if (-not (Test-Path $HostLocalPath)) {
     $tgz = "$env:TEMP\cni-plugins.tgz"
-    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.5.1/cni-plugins-windows-amd64-v1.5.1.tgz'
+    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-windows-amd64-v1.9.1.tgz'
     Write-Log "04-install-k8s-binaries: Downloading host-local IPAM plugin"
     curl.exe -fsSL -L -o $tgz $url
     if ($LASTEXITCODE -ne 0) { throw "Download failed: cni-plugins from $url" }
