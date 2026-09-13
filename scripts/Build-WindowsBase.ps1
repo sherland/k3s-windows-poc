@@ -56,20 +56,62 @@ function Get-IsoConfig {
 }
 
 # ---------------------------------------------------------------------------
+# Structural integrity check for a Windows install ISO.
+#
+# Microsoft's eval-media fwlinks (go.microsoft.com/fwlink/...) don't publish a
+# stable checksum to pin against (unlike the Ubuntu ISO, whose SHA256 is
+# resolved dynamically from releases.ubuntu.com), and curl can report success
+# on an HTTP response that was silently truncated or corrupted in transit —
+# neither -fsSL exit code nor a bare file-size check catches this reliably.
+# The only strong signal available is: can Windows itself actually read the
+# install image? Mount the ISO and enumerate install.wim via DISM; a
+# corrupted ISO fails here immediately instead of hours later as an
+# inexplicable Windows-Setup hang with Hyper-V integration services stuck at
+# "no contact" (see AGENTS.md Pitfalls).
+# ---------------------------------------------------------------------------
+function Test-WindowsIsoValid {
+    param([string]$IsoPath)
+
+    if (-not (Test-Path $IsoPath)) { return $false }
+    if ((Get-Item $IsoPath).Length -lt 1GB) { return $false }
+
+    $mount = $null
+    try {
+        $mount = Mount-DiskImage -ImagePath $IsoPath -PassThru -ErrorAction Stop
+        $driveLetter = ($mount | Get-Volume -ErrorAction Stop).DriveLetter
+        $wimPath = "${driveLetter}:\sources\install.wim"
+        if (-not (Test-Path $wimPath)) { return $false }
+        $images = Get-WindowsImage -ImagePath $wimPath -ErrorAction Stop
+        return ($images.Count -gt 0)
+    } catch {
+        return $false
+    } finally {
+        if ($mount) { Dismount-DiskImage -ImagePath $IsoPath -ErrorAction SilentlyContinue | Out-Null }
+    }
+}
+
 function Invoke-ISODownload {
     param([hashtable]$Cfg, [string]$OSVersion)
 
     $isoPath = $Cfg.IsoFile
     $null    = New-Item -ItemType Directory -Force -Path (Split-Path $isoPath)
 
-    if ((Test-Path $isoPath) -and (Get-Item $isoPath).Length -gt 1GB) {
-        Write-Success "WS${OSVersion} ISO already present: $isoPath"
-        return
+    if (Test-Path $isoPath) {
+        if (Test-WindowsIsoValid -IsoPath $isoPath) {
+            Write-Success "WS${OSVersion} ISO already present and verified readable: $isoPath"
+            return
+        }
+        Write-Warn "WS${OSVersion} ISO present but failed integrity check (corrupted or incomplete) — re-downloading."
+        Remove-Item $isoPath -Force
     }
 
     if ($Cfg.LocalPath -and (Test-Path $Cfg.LocalPath)) {
         Write-Step "Using configured local ISO: $($Cfg.LocalPath)"
         Copy-Item $Cfg.LocalPath $isoPath -Force
+        if (-not (Test-WindowsIsoValid -IsoPath $isoPath)) {
+            Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
+            throw "Configured local ISO '$($Cfg.LocalPath)' failed the integrity check (could not read sources\install.wim)."
+        }
         return
     }
 
@@ -77,21 +119,39 @@ function Invoke-ISODownload {
     Write-Step "Downloading Windows Server ${OSVersion} Eval ISO (~5 GB)..."
     Write-Warn  "Ensure stable internet connectivity."
 
-    Invoke-Step "Download WS${OSVersion} ISO via curl" {
-        curl.exe -fsSL -L --max-redirs 10 -o $isoPath $Cfg.EvalUrl
-        if ($LASTEXITCODE -ne 0) {
-            Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
-            throw "curl download failed (exit $LASTEXITCODE). Set WindowsISOLocalPath${OSVersion} in config/variables.ps1."
+    $maxAttempts = 2
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        Invoke-Step "Download WS${OSVersion} ISO via curl (attempt $attempt/$maxAttempts)" {
+            curl.exe -fsSL -L --max-redirs 10 -o $isoPath $Cfg.EvalUrl
+            if ($LASTEXITCODE -ne 0) {
+                Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
+                throw "curl download failed (exit $LASTEXITCODE). Set WindowsISOLocalPath${OSVersion} in config/variables.ps1."
+            }
         }
-    }
 
-    $size = (Get-Item $isoPath).Length
-    if ($size -lt 1GB) {
-        Remove-Item $isoPath -Force
-        throw "Downloaded file is too small ($([math]::Round($size/1MB)) MB). Microsoft Eval Center download likely failed. " +
-              "Download manually and set WindowsISOLocalPath${OSVersion} in config/variables.ps1."
+        $size = (Get-Item $isoPath).Length
+        if ($size -lt 1GB) {
+            Remove-Item $isoPath -Force
+            throw "Downloaded file is too small ($([math]::Round($size/1MB)) MB). Microsoft Eval Center download likely failed. " +
+                  "Download manually and set WindowsISOLocalPath${OSVersion} in config/variables.ps1."
+        }
+
+        Invoke-Step "Verify WS${OSVersion} ISO is readable (mount + enumerate install.wim)" {
+            if (-not (Test-WindowsIsoValid -IsoPath $isoPath)) {
+                Remove-Item $isoPath -Force -ErrorAction SilentlyContinue
+                if ($attempt -eq $maxAttempts) {
+                    throw "WS${OSVersion} ISO failed integrity check after $maxAttempts download attempt(s) — " +
+                          "downloaded file is corrupted (Windows cannot read sources\install.wim), not just a size mismatch. " +
+                          "Download manually and set WindowsISOLocalPath${OSVersion} in config/variables.ps1."
+                }
+                Write-Warn "Integrity check failed — retrying download."
+            } else {
+                Write-Success "WS${OSVersion} ISO downloaded and verified: $([math]::Round($size/1GB,1)) GB"
+            }
+        }
+
+        if (Test-Path $isoPath) { break }
     }
-    Write-Success "WS${OSVersion} ISO downloaded: $([math]::Round($size/1GB,1)) GB"
 }
 
 # ---------------------------------------------------------------------------
