@@ -1,0 +1,6 @@
+# Force LF line endings for scripts that run inside Linux VMs via bash, even on
+# a Windows checkout with core.autocrlf=true. CRLF breaks bash (e.g. `set -euo
+# pipefail\r` is parsed as an invalid option), which surfaces intermittently
+# depending on how each script is transferred and executed (Packer's SSH
+# communicator tolerates it; a plain `scp` + `bash /tmp/script.sh` does not).
+*.sh text eol=lf
