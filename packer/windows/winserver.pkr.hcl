@@ -75,11 +75,11 @@ variable "service_cidr" {
 }
 variable "flannel_version" {
   type    = string
-  default = "v0.25.7"
+  default = "v0.28.9"
 }
 variable "wins_cni_version" {
   type    = string
-  default = "v0.3.0"
+  default = "v0.3.3"
 }
 variable "containerd_version" {
   type    = string

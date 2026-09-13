@@ -70,7 +70,7 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # -----------------------------------------------------------------------------
 $script:K3sVersion        = 'v1.35.8+k3s1'
 $script:ContainerdVersion = '1.7.35'
-$script:FlannelVersion    = 'v0.28.5'   # Windows flanneld.exe + CNI plugin
+$script:FlannelVersion    = 'v0.28.9'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)
 $script:CniPluginsVersion = 'v1.9.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)

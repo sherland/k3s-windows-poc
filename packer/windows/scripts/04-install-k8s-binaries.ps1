@@ -22,8 +22,8 @@
 #   CLUSTER_DNS_IP    - CoreDNS cluster IP   (default: 10.43.0.10)
 #   CLUSTER_CIDR      - Pod CIDR             (default: 10.42.0.0/16)
 #   SERVICE_CIDR      - Service CIDR         (default: 10.43.0.0/16)
-#   FLANNEL_VERSION   - flannel release tag  (default: v0.25.7)
-#   WINS_CNI_VERSION  - windows-container-networking release (default: v0.3.0)
+#   FLANNEL_VERSION   - flannel release tag  (default: v0.28.9)
+#   WINS_CNI_VERSION  - windows-container-networking release (default: v0.3.3)
 # =============================================================================
 
 Set-StrictMode -Version Latest
@@ -35,8 +35,8 @@ $K8sVersion    = $env:K8S_VERSION;   if (-not $K8sVersion)  { throw 'K8S_VERSION
 $ClusterDnsIp  = if ($env:CLUSTER_DNS_IP)   { $env:CLUSTER_DNS_IP }   else { '10.43.0.10' }
 $ClusterCidr   = if ($env:CLUSTER_CIDR)     { $env:CLUSTER_CIDR }     else { '10.42.0.0/16' }
 $ServiceCidr   = if ($env:SERVICE_CIDR)     { $env:SERVICE_CIDR }     else { '10.43.0.0/16' }
-$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.25.7' }
-$WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.0' }
+$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.9' }
+$WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.3' }
 
 $KDir          = 'C:\k'
 $CniBinDir     = 'C:\k\cni'
