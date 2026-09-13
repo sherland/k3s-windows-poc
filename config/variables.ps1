@@ -69,7 +69,7 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # containerd pin below (2.x breaks the CRI v1 API kubelet expects on Windows workers).
 # -----------------------------------------------------------------------------
 $script:K3sVersion        = 'v1.35.8+k3s1'
-$script:ContainerdVersion = '1.7.33'
+$script:ContainerdVersion = '1.7.35'
 $script:FlannelVersion    = 'v0.28.5'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)

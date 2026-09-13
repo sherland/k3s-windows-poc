@@ -83,7 +83,7 @@ variable "wins_cni_version" {
 }
 variable "containerd_version" {
   type    = string
-  default = "1.7.32"
+  default = "1.7.35"
 }
 
 # ---------------------------------------------------------------------------
