@@ -4,12 +4,12 @@ Automates building a configurable k3s cluster on a single Windows 11 host using 
 
 | Scenario | Script | CNI | Nodes | Verified |
 |----------|--------|-----|-------|---------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2025) | PASS (04:47) |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 + Flannel + macvlan | CP + 2 Linux | PASS (04:53) |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble | CP + 2 Linux | 30/30 PASS (06:20) |
-| D | `Run-ScenarioD.ps1` | Calico v3.32.0 | CP + 2 Linux | 30/30 PASS (05:54) |
-| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2025) | 40/40 PASS (07:06) |
-| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows) | CP + 2 Linux + 1 Windows (WS2025) | 43/43 PASS (07:35) |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2025) | 33/33 PASS (04:38) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.1 + Flannel + macvlan | CP + 2 Linux | 39/39 PASS (04:28) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.20.1 + Hubble | CP + 2 Linux | 33/33 PASS (05:40) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.2 | CP + 2 Linux | 30/30 PASS (05:24) |
+| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2025) | 40/40 PASS (06:35) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.7.0 (OVS, unified Linux + Windows) | CP + 2 Linux + 1 Windows (WS2025) | 43/43 PASS (07:07) |
 
 Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
@@ -241,11 +241,11 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 ├── config/
 │   ├── variables.ps1          # Single source of truth: versions, topology, credentials
 │   └── cni/
-│       ├── multus-daemonset.yaml      # Multus v4.3.0 DaemonSet manifest
-│       ├── cilium-values.yaml         # Cilium v1.19.5 Helm values (Hubble enabled)
+│       ├── multus-daemonset.yaml      # Multus v4.3.1 DaemonSet manifest
+│       ├── cilium-values.yaml         # Cilium v1.20.1 Helm values (Hubble enabled)
 │       ├── cilium-chained-values.yaml # Cilium chained-mode values for Scenario E
-│       ├── calico-values.yaml         # Calico v3.32.0 tigera-operator Helm values
-│       └── antrea-values.yaml         # Antrea v2.6.2 Helm values (VXLAN, Linux nodeSelector)
+│       ├── calico-values.yaml         # Calico v3.32.2 tigera-operator Helm values
+│       └── antrea-values.yaml         # Antrea v2.7.0 Helm values (VXLAN, Linux nodeSelector)
 ├── docs/
 │   └── architecture.md        # Component layout, networking, build sequence
 ├── output/                    # Generated at runtime

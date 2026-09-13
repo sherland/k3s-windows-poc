@@ -12,12 +12,12 @@ Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built on
 
 | Scenario | Script | CNI | Nodes | Result |
 |----------|--------|-----|-------|--------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | PASS (04:47) |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.0 on top of Flannel | CP + lnx-01 + lnx-02 | PASS (04:53) |
-| C | `Run-ScenarioC.ps1` | Cilium v1.19.5 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 30/30 PASS (06:20) |
-| D | `Run-ScenarioD.ps1` | Calico v3.32.0 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 30/30 PASS (05:54) |
-| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | 40/40 PASS (07:06) |
-| F | `Run-ScenarioF.ps1` | Antrea v2.6.2 (OVS, unified Linux + Windows, VXLAN) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | 43/43 PASS (07:35) |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded, host-gw) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | 33/33 PASS (04:38) |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.1 on top of Flannel | CP + lnx-01 + lnx-02 | 39/39 PASS (04:28) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.20.1 + Hubble (replaces Flannel) | CP + lnx-01 + lnx-02 | 33/33 PASS (05:40) |
+| D | `Run-ScenarioD.ps1` | Calico v3.32.2 via tigera-operator (replaces Flannel) | CP + lnx-01 + lnx-02 | 30/30 PASS (05:24) |
+| E | `Run-ScenarioE.ps1` | Flannel (host-gw) + chained Cilium + Hubble (Linux only) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | 40/40 PASS (06:35) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.7.0 (OVS, unified Linux + Windows, VXLAN) | CP + lnx-01 + lnx-02 + win-01 (WS2025) | 43/43 PASS (07:07) |
 
 Each scenario script: patches `config/variables.ps1`, tears down any existing cluster (keeping ISOs/cache by default), then runs all phases 0–10 end-to-end.
 All scenarios default to **2 Linux workers** (`lnx-01` + `lnx-02`). Pass `-NoExtraWorker` to each script to use only 1.
@@ -160,11 +160,11 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 
 | File | Purpose |
 |------|---------|
-| `config/cni/multus-daemonset.yaml` | Multus v4.3.0 thick DaemonSet (`ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.0-thick`) |
-| `config/cni/cilium-values.yaml` | Cilium v1.19.5 Helm values (native routing, IPAM=kubernetes, k3s CNI paths, **Hubble relay+UI enabled**) |
-| `config/cni/cilium-chained-values.yaml` | Cilium v1.19.5 Helm values for **generic-veth chaining mode** (Scenario E — layered on top of Flannel; Hubble relay+UI enabled, Linux-only nodeSelector) |
-| `config/cni/calico-values.yaml` | Calico v3.29.3 tigera-operator Helm values (VXLAN, BGP disabled, pod CIDR 10.42.0.0/16) |
-| `config/cni/antrea-values.yaml` | Antrea v2.6.2 Helm values (VXLAN tunnel, Linux agent nodeSelector, antreaProxy health-check server disabled) |
+| `config/cni/multus-daemonset.yaml` | Multus v4.3.1 thick DaemonSet (`ghcr.io/k8snetworkplumbingwg/multus-cni:v4.3.1-thick`) |
+| `config/cni/cilium-values.yaml` | Cilium v1.20.1 Helm values (native routing, IPAM=kubernetes, k3s CNI paths, **Hubble relay+UI enabled**) |
+| `config/cni/cilium-chained-values.yaml` | Cilium v1.20.1 Helm values for **generic-veth chaining mode** (Scenario E — layered on top of Flannel; Hubble relay+UI enabled, Linux-only nodeSelector) |
+| `config/cni/calico-values.yaml` | Calico v3.32.2 tigera-operator Helm values (VXLAN, BGP disabled, pod CIDR 10.42.0.0/16) |
+| `config/cni/antrea-values.yaml` | Antrea v2.7.0 Helm values (VXLAN tunnel, Linux agent nodeSelector, antreaProxy health-check server disabled) |
 
 ## Common Tasks
 
@@ -211,7 +211,7 @@ Runs the full sequence (0→4→3 force→1), asserts 6 invariants per step, the
 - `$script:HostNicName` auto-detects via default route; override in `config/variables.ps1` if the wrong NIC is selected.
 - **A bad "ISO" download hangs Windows Setup for the full timeout with no useful error** — cause can be either a truncated/corrupted transfer *or* (as happened 2026-09-13) Microsoft silently repointing the fwlink to something else entirely: `$script:WindowsEvalUrl2022` (`go.microsoft.com/fwlink/p/?LinkID=2195334`) now 301-redirects to a **Windows Server 2019 `.vhd`**, not a WS2022 `.iso` — confirmed via `curl -sIL` showing `Location: .../17763.737...serverdatacentereval....vhd` and `file <path>` reporting "Microsoft Disk Image, Virtual Server or Virtual PC" instead of ISO9660 media. Microsoft's current eval-center flow for WS2022 (`microsoft.com/en-us/evalcenter/evaluate-windows-server-2022`) now gates the download behind a registration landing page with no stable scriptable URL — unlike WS2025, whose fwlink (`LinkID=2195280`) still redirects directly to a real `.iso`. **This is why Scenarios A/E/F use WS2025, not WS2022**, despite `packer/windows/autounattend/2022/` and full WS2022 build support still existing in the codebase for anyone who manually downloads a WS2022 ISO and sets `WindowsISOLocalPath2022`. In all cases the symptom looks identical and gives no direct error: Packer sits at "Waiting for WinRM to become available..." and `Get-VMIntegrationService`/`Get-VM ... Heartbeat` shows "no contact" for the entire wait, because Windows Setup never got far enough (if it can even boot the mounted media at all) to load integration services. **Diagnose in seconds, not 90 minutes**: `curl -sIL <EvalUrl>` to see what it actually redirects to and its `Content-Type`, and `Mount-DiskImage -ImagePath <path>` + `file <path>` to confirm the downloaded file is actually ISO9660 media. `Build-WindowsBase.ps1` guards against the corruption case automatically: `Test-WindowsIsoValid` mounts the ISO and enumerates `sources\install.wim` via `Get-WindowsImage` before (re)using a cached ISO and after every fresh download, retrying once on failure — but it cannot fix a fwlink that has been repointed to a different OS/format; that needs a config/URL change like the one above. Covered by `tests/BuildWindowsBase.Tests.ps1`.
 - Windows VM base build takes 15–25 min (feature install requires in-guest reboots during Packer).
-- Containerd is pinned to **v1.7.33** (latest 1.7.x) — v2.x breaks the CRI v1 API that kubelet (via k3s) expects on Windows workers.
+- Containerd is pinned to **v1.7.35** (latest 1.7.x) — v2.x breaks the CRI v1 API that kubelet (via k3s) expects on Windows workers.
 - **Cilium, Calico, and flannel+cilium require pre-join or post-join phase ordering**: For `cilium` and `calico`, nodes stay `NotReady` until the CNI is applied — `Main.ps1` runs `Apply-CNI.ps1` *before* `Join-Nodes.ps1`. For `flannel+cilium`, Flannel handles routing so all nodes (including Windows) join first, then Cilium is chained in post-join. `Main.ps1` handles this ordering automatically for all three.
 - **Helm is required** for Cilium, Calico, and flannel+cilium installs. Phase 0 checks for it on PATH. Install: `winget install --id Helm.Helm`.
 - **Hubble observability**: Hubble is enabled in Scenarios C and E (relay + UI deployments in `kube-system`). `Verify-Cluster.ps1` validates Hubble relay/UI readiness and uses `kubectl exec` into a Cilium pod to run `hubble observe` — no host-side tooling is required. The `hubble` binary is baked into the Cilium container image.
