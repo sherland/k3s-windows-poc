@@ -35,7 +35,7 @@ $script:ExtraLinuxWorkerRAM  = 2048          # MB — additional workers (k8s-ln
 # -----------------------------------------------------------------------------
 $script:WindowsWorkerPrefix = 'k8s-win'     # → k8s-win-01, k8s-win-02 (≤10 chars so result stays ≤15)
 $script:WindowsNodeSpecs    = @(
-    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }
+    @{ Count = 1; OSVersion = '2025'; CPU = 4; RAM = 7168 }
 )
 
 # -----------------------------------------------------------------------------

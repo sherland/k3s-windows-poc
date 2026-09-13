@@ -1,6 +1,6 @@
 # =============================================================================
 # Run-ScenarioF.ps1
-# Test Case F: 1 control-plane + 2 Linux workers + 1 Windows node (WS2022)
+# Test Case F: 1 control-plane + 2 Linux workers + 1 Windows node (WS2025)
 #              CNI: Antrea v2.6.2 (VMware / Open vSwitch — unified Linux + Windows)
 #
 # Antrea replaces Flannel entirely (k3s is launched with --flannel-backend=none).
@@ -45,7 +45,7 @@ function Write-Banner([string]$msg) {
 # ---------------------------------------------------------------------------
 $workerCount = if ($NoExtraWorker) { 1 } else { 2 }
 $workerLabel = if ($NoExtraWorker) { '1 Linux worker' } else { '2 Linux workers (lnx-01: 4 GB, lnx-02: 2 GB)' }
-Write-Banner "SCENARIO F — Antrea OVS + CP + $workerLabel + 1 Windows node (WS2022)"
+Write-Banner "SCENARIO F — Antrea OVS + CP + $workerLabel + 1 Windows node (WS2025)"
 
 $configPath = Join-Path $ScriptRoot 'config\variables.ps1'
 $cfg = Get-Content $configPath -Raw
@@ -60,13 +60,13 @@ $cfg = $cfg -replace `
     "\`$script:LinuxWorkerCount\s*=\s*\d+([^\n]*)", `
     "`$script:LinuxWorkerCount     = $workerCount             # 0 = control-plane only"
 
-# Set WindowsNodeSpecs = 1x WS2022
+# Set WindowsNodeSpecs = 1x WS2025
 $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
-    "`$script:WindowsNodeSpecs    = @(`n    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }`n)"
+    "`$script:WindowsNodeSpecs    = @(`n    @{ Count = 1; OSVersion = '2025'; CPU = 4; RAM = 7168 }`n)"
 
 Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
-Write-Host "[OK] config/variables.ps1 → CNI=antrea, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=1×WS2022" -ForegroundColor Green
+Write-Host "[OK] config/variables.ps1 → CNI=antrea, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=1×WS2025" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # 2. Teardown
