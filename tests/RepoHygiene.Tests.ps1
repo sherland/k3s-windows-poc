@@ -40,6 +40,17 @@ Describe 'PowerShell syntax' {
 }
 
 Describe 'Packer templates' -Tag 'RequiresPacker' {
+    BeforeAll {
+        if ($HavePacker) {
+            # `packer init` downloads the hyperv plugin these templates require --
+            # `packer validate` alone doesn't do this, and fails with "Missing
+            # plugins" on a runner that has never built with these templates
+            # before (e.g. a fresh CI checkout).
+            Push-Location (Join-Path $RepoRoot 'packer\linux');   packer init . 2>&1 | Out-Null; Pop-Location
+            Push-Location (Join-Path $RepoRoot 'packer\windows'); packer init . 2>&1 | Out-Null; Pop-Location
+        }
+    }
+
     It 'validates ubuntu.pkr.hcl' -Skip:(-not $HavePacker) {
         Push-Location (Join-Path $RepoRoot 'packer\linux')
         try {
