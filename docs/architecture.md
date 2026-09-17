@@ -29,8 +29,8 @@ Windows 11 Host (Hyper-V)
 │
 ├── Golden base VHDXs (read-only after Packer build)
 │   ├── vhdx/linux-base/                — Ubuntu 24.04 LTS + k3s binary
-│   ├── vhdx/win2022-base/              — WS2022 + containerd v1.7.33 + kubelet
-│   └── vhdx/win2025-base/              — WS2025 + containerd v1.7.33 + kubelet
+│   ├── vhdx/win2022-base/              — WS2022 + containerd v1.7.35 + kubelet
+│   └── vhdx/win2025-base/              — WS2025 + containerd v1.7.35 + kubelet
 │
 └── Node VMs (child differencing disks — vhdx/nodes/)
     ├── k8s-cp-01    (Linux control plane — k3s server)
@@ -153,15 +153,15 @@ is injected as a virtual floppy. WinRM is enabled inside `winrm-setup.ps1` (runs
 
 | Script | What it does |
 |--------|-------------|
-| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v1.7.33, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
+| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v1.7.35, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
 | `packer/windows/scripts/05-firstboot-setup.ps1` | Writes `C:\k8s-firstboot.ps1` — a PowerShell script that reads `C:\k8s-node-config.json` (injected offline by `Join-Nodes.ps1`), writes actual kubeconfigs and `C:\k\cni\config\cni.conf`, renames the computer, and registers `kubelet` + `kube-proxy` as Windows services. Also creates a `k8s-firstboot` scheduled task (SYSTEM, AtStartup, Trigger=Boot) that runs `k8s-firstboot.ps1` once, logs to `C:\k8s-firstboot-log.txt`, then deletes itself. |
 
 After provisioning, Packer shuts down and the VHDX lands in `vhdx/win2022-base/` or
 `vhdx/win2025-base/`.
 
-> **containerd v1.7.33 pin:** v2.x removed the CRI v1 gRPC API (`runtime.v1.RuntimeService`)
-> that kubelet v1.35 expects. v1.7.33 is the latest v1.x release and is explicitly set in
-> `config/variables.ps1` as `$script:ContainerdVersion = '1.7.33'`.
+> **containerd v1.7.35 pin:** v2.x removed the CRI v1 gRPC API (`runtime.v1.RuntimeService`)
+> that kubelet v1.35 expects. v1.7.35 is the latest v1.x release and is explicitly set in
+> `config/variables.ps1` as `$script:ContainerdVersion = '1.7.35'`.
 
 ---
 
@@ -320,7 +320,7 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ## 6. Scenario Comparison — A, B, C, D, E, F
 
-All scenarios use k3s v1.35.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
+All scenarios use k3s v1.35.8+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
 
 ---
@@ -446,7 +446,7 @@ Cilium completely replaces Flannel. k3s is started with:
 This tells k3s not to start its embedded flannel process and not to deploy its built-in
 network policy controller (Cilium provides its own).
 
-Cilium is installed via Helm (`cilium/cilium` chart v1.19.5) before workers join
+Cilium is installed via Helm (`cilium/cilium` chart v1.20.1) before workers join
 (pre-join phase ordering, §10). It uses eBPF programs loaded into the Linux kernel
 to implement routing, load balancing, and network policy — entirely in kernel space,
 without iptables chains.
@@ -650,7 +650,7 @@ Antrea the only CNI in this repo with a **unified data plane** across both OS ty
 k3s starts with `--flannel-backend=none --disable-network-policy`. Antrea is installed
 *before* workers join (same pre-join phase ordering as Cilium and Calico).
 
-**Linux:** Antrea is installed via Helm (`antrea/antrea` chart v2.6.2). The
+**Linux:** Antrea is installed via Helm (`antrea/antrea` chart v2.7.0). The
 `antrea-controller` Deployment and `antrea-agent` DaemonSet run in `kube-system`.
 Each Linux node gets an OVS bridge and a gateway interface (`antrea-gw0`).
 
@@ -902,7 +902,7 @@ manages Felix configuration via the `FelixConfiguration` CR.
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| k3s | v1.35.5+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
+| k3s | v1.35.8+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
 | containerd | bundled with k3s | Bundled with k3s; manages Linux pod containers |
 | Flannel | embedded | host-gw (Scenarios A, B); disabled for C, D |
 | CoreDNS | embedded | ClusterIP `10.43.0.10` |
@@ -923,16 +923,16 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 
 | Binary | Version | Role |
 |--------|---------|------|
-| `kubelet.exe` | v1.35.5 | Node agent; registers with k3s API server |
-| `kube-proxy.exe` | v1.35.5 | kernelspace mode; programs HNS rules |
-| `kubectl.exe` | v1.35.5 | Used by `start-network.ps1` to query pod CIDR |
-| `containerd.exe` | **v1.7.33** (pinned) | Container runtime |
+| `kubelet.exe` | v1.35.8 | Node agent; registers with k3s API server |
+| `kube-proxy.exe` | v1.35.8 | kernelspace mode; programs HNS rules |
+| `kubectl.exe` | v1.35.8 | Used by `start-network.ps1` to query pod CIDR |
+| `containerd.exe` | **v1.7.35** (pinned) | Container runtime |
 
 #### CNI plugins (`C:\k\cni\`)
 
 | Plugin | Source | Role |
 |--------|--------|------|
-| `flannel.exe` | flannel v0.28.5 | CNI broker; reads flannel net-conf, delegates to win-bridge |
+| `flannel.exe` | flannel v0.28.9 | CNI broker; reads flannel net-conf, delegates to win-bridge |
 | `win-bridge.exe` | ms/windows-container-networking v0.3.3 | Creates HNS L2Bridge endpoints |
 | `host-local.exe` | containernetworking/plugins | IPAM — allocates pod IPs from node CIDR |
 | `hns.psm1` | microsoft/SDN | PowerShell HNS helper module |

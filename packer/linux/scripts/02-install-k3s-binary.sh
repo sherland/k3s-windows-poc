@@ -4,7 +4,7 @@
 # Install the k3s binary (only) into the golden base image.
 #
 # Environment:
-#   K3S_VERSION  — e.g. v1.32.5+k3s1 (set by Packer build provisioner)
+#   K3S_VERSION  — e.g. v1.35.8+k3s1 (set by Packer build provisioner)
 #
 # IMPORTANT: INSTALL_K3S_SKIP_ENABLE=true  → no systemd unit created
 #            INSTALL_K3S_SKIP_START=true   → k3s is NOT started
@@ -13,7 +13,7 @@
 # =============================================================================
 set -euo pipefail
 
-K3S_VERSION="${K3S_VERSION:-v1.32.5+k3s1}"
+K3S_VERSION="${K3S_VERSION:-v1.35.8+k3s1}"
 
 echo "[k3s-binary] Installing k3s binary ${K3S_VERSION} (skip enable + skip start)..."
 

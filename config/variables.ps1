@@ -35,7 +35,7 @@ $script:ExtraLinuxWorkerRAM  = 2048          # MB — additional workers (k8s-ln
 # -----------------------------------------------------------------------------
 $script:WindowsWorkerPrefix = 'k8s-win'     # → k8s-win-01, k8s-win-02 (≤10 chars so result stays ≤15)
 $script:WindowsNodeSpecs    = @(
-    @{ Count = 1; OSVersion = '2022'; CPU = 4; RAM = 7168 }
+    @{ Count = 1; OSVersion = '2025'; CPU = 4; RAM = 7168 }
 )
 
 # -----------------------------------------------------------------------------
@@ -62,18 +62,21 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # Software Versions
 # k3s is pinned — both Linux and Windows binaries must use the same version.
 # containerd is pinned to v1.x — kubelet v1.35 requires CRI v1 gRPC API (removed in v2.x).
-# Compatible range: Cilium 1.19 supports k8s 1.32–1.35; Calico 3.32 supports k8s 1.34–1.36.
-# Intersection: k8s 1.34–1.35. k3s v1.35.5+k3s1 (Kubernetes 1.35) is the latest compatible.
+# Compatible range: Cilium 1.20 supports k8s 1.33–1.36; Calico 3.32 supports k8s 1.34–1.36.
+# Intersection: k8s 1.34–1.35. k3s v1.35.8+k3s1 (Kubernetes 1.35) is the latest compatible.
+# NOTE: k3s v1.36.x is NOT usable here — Kubernetes 1.36 kubelet removes the containerd 1.x
+# cgroup-driver fallback and requires containerd 2.0+, which conflicts with the Windows
+# containerd pin below (2.x breaks the CRI v1 API kubelet expects on Windows workers).
 # -----------------------------------------------------------------------------
-$script:K3sVersion        = 'v1.35.5+k3s1'
-$script:ContainerdVersion = '1.7.33'
-$script:FlannelVersion    = 'v0.28.5'   # Windows flanneld.exe + CNI plugin
+$script:K3sVersion        = 'v1.35.8+k3s1'
+$script:ContainerdVersion = '1.7.35'
+$script:FlannelVersion    = 'v0.28.9'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
-$script:MultusVersion     = 'v4.3.0'    # multus-cni meta-plugin (Linux only)
+$script:MultusVersion     = 'v4.3.1'    # multus-cni meta-plugin (Linux only)
 $script:CniPluginsVersion = 'v1.9.1'    # containernetworking/plugins — required for Multus secondary interfaces (macvlan, ipvlan, etc.)
-$script:CiliumVersion     = '1.19.5'    # Cilium CNI (Linux only; latest stable)
-$script:CalicoVersion     = 'v3.32.0'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
-$script:AntreaVersion     = '2.6.2'     # Antrea CNI via Helm chart (Linux + Windows; latest stable)
+$script:CiliumVersion     = '1.20.1'    # Cilium CNI (Linux only; latest stable)
+$script:CalicoVersion     = 'v3.32.2'   # Calico CNI via tigera-operator Helm chart (Linux only; latest stable)
+$script:AntreaVersion     = '2.7.0'     # Antrea CNI via Helm chart (Linux + Windows; latest stable)
 $script:PackerWingetId    = 'Hashicorp.Packer'
 $script:KubectlWingetId   = 'Kubernetes.kubectl'
 

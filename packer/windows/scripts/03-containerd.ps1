@@ -11,8 +11,8 @@ function Write-Log { param([string]$Msg) Write-Host "[$(Get-Date -f HH:mm:ss)] $
 
 $ContainerdVersion = $env:CONTAINERD_VERSION
 if (-not $ContainerdVersion -or $ContainerdVersion -eq 'latest') {
-    # Default to latest 1.7.x — kubelet v1.32 requires CRI v1 gRPC API which was removed in containerd v2.x
-    $ContainerdVersion = '1.7.32'
+    # Default to latest 1.7.x — kubelet v1.35 requires CRI v1 gRPC API which was removed in containerd v2.x
+    $ContainerdVersion = '1.7.35'
 }
 Write-Log "03-containerd: Using containerd v$ContainerdVersion"
 

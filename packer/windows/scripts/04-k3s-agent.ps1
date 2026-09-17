@@ -12,15 +12,15 @@
 # for flanneld so it only has node-read permissions.
 #
 # Environment variables injected by Packer:
-#   K8S_VERSION            - e.g. v1.32.5  (k3s version with +k3sN suffix stripped)
+#   K8S_VERSION            - e.g. v1.35.8  (k3s version with +k3sN suffix stripped)
 #   K3S_SERVER_IP          - IP of the Linux VM running k3s
 #   KUBECONFIG_B64         - base64(k3s admin kubeconfig, server IP already patched)
 #   FLANNEL_KUBECONFIG_B64 - base64(flannel ServiceAccount kubeconfig)
 #   CLUSTER_DNS_IP         - CoreDNS cluster IP  (default: 10.43.0.10)
 #   CLUSTER_CIDR           - Pod CIDR            (default: 10.42.0.0/16)
 #   SERVICE_CIDR           - Service CIDR        (default: 10.43.0.0/16)
-#   FLANNEL_VERSION        - flannel release tag  (default: v0.25.7)
-#   WINS_CNI_VERSION       - windows-container-networking release (default: v0.3.0)
+#   FLANNEL_VERSION        - flannel release tag  (default: v0.28.9)
+#   WINS_CNI_VERSION       - windows-container-networking release (default: v0.3.3)
 # =============================================================================
 
 Set-StrictMode -Version Latest
@@ -35,8 +35,8 @@ $FlannelKubeconfigB64 = $env:FLANNEL_KUBECONFIG_B64;  if (-not $FlannelKubeconfi
 $ClusterDnsIp   = if ($env:CLUSTER_DNS_IP)   { $env:CLUSTER_DNS_IP }   else { '10.43.0.10' }
 $ClusterCidr    = if ($env:CLUSTER_CIDR)     { $env:CLUSTER_CIDR }     else { '10.42.0.0/16' }
 $ServiceCidr    = if ($env:SERVICE_CIDR)     { $env:SERVICE_CIDR }     else { '10.43.0.0/16' }
-$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.25.7' }
-$WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.0' }
+$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.9' }
+$WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.3' }
 
 $KDir             = 'C:\k'
 $CniBinDir        = 'C:\k\cni'
@@ -162,7 +162,7 @@ if (-not (Test-Path $HnsPsmPath)) {
 # host-local IPAM from containernetworking/plugins
 if (-not (Test-Path $HostLocalPath)) {
     $tgz = "$env:TEMP\cni-plugins.tgz"
-    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.5.1/cni-plugins-windows-amd64-v1.5.1.tgz'
+    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-windows-amd64-v1.9.1.tgz'
     curl.exe -fsSL -L -o $tgz $url
     if ($LASTEXITCODE -ne 0) { throw "Download failed: cni-plugins" }
     tar.exe -xzf $tgz -C $CniBinDir 2>&1 | Out-Null

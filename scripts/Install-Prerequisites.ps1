@@ -117,6 +117,21 @@ function Assert-Phase0Complete {
 }
 
 # ---------------------------------------------------------------------------
+function Assert-NoCrlfShellScripts {
+    $shFiles = @(Get-ChildItem -Path $script:RepoRoot -Filter '*.sh' -Recurse -File)
+    $crlfFiles = @($shFiles | Where-Object {
+        (Get-Content -Raw -LiteralPath $_.FullName) -match "`r`n"
+    })
+    if ($crlfFiles.Count -gt 0) {
+        $list = ($crlfFiles | ForEach-Object { $_.FullName.Replace("$script:RepoRoot\", '') }) -join "`n    "
+        throw "CRLF line endings found in shell script(s) — this breaks bash execution " +
+              "(e.g. 'set -euo pipefail<CR>' parses as an invalid option):`n    $list`n" +
+              "Fix: git add --renormalize . ; git status  (requires .gitattributes with '*.sh text eol=lf')"
+    }
+    Write-Success "No CRLF line endings in $($shFiles.Count) shell script(s)"
+}
+
+# ---------------------------------------------------------------------------
 function Invoke-Phase0 {
     Write-PhaseHeader '0' 'Host Prerequisites'
 
@@ -146,6 +161,15 @@ function Invoke-Phase0 {
 
     # --- OpenSSH client ---
     Invoke-Step 'Install OpenSSH client' { Install-OpenSSHClient }
+
+    # --- Shell script line endings ---
+    # CRLF breaks bash silently in some execution paths (e.g. Packer's own shell
+    # provisioner tolerates it, but a plain `scp` + `bash /tmp/script.sh` does not —
+    # `set -euo pipefail\r` is parsed as an invalid option). A Windows checkout with
+    # core.autocrlf=true reintroduces CRLF unless .gitattributes forces LF and the
+    # working tree has been renormalized. Catch it here, before any VM/image build time
+    # is spent, rather than as a cryptic failure deep in Bootstrap-ControlPlane.ps1.
+    Invoke-Step 'Verify shell script line endings' { Assert-NoCrlfShellScripts }
 
     # --- Windows ADK (for oscdimg.exe — needed to create Linux cloud-init seed ISOs) ---
     Invoke-Step 'Ensure Windows ADK (oscdimg.exe)' {

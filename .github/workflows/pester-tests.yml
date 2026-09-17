@@ -1,0 +1,46 @@
+name: Pester tests
+
+# Fast, no-Hyper-V checks: repo hygiene (line endings, PowerShell/YAML syntax,
+# version-pin drift), Helpers.ps1 unit tests, and config/variables.ps1 sanity.
+# Full end-to-end cluster validation (actually building VMs with Packer/Hyper-V)
+# cannot run on GitHub-hosted runners (no nested virtualization) and stays a
+# manual/self-hosted job — see AGENTS.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  pester:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester and powershell-yaml
+        shell: pwsh
+        run: |
+          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module -Name powershell-yaml -Force -Scope CurrentUser
+
+      - name: Run Pester test suite
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.5.0 -Force
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = 'tests'
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = 'Detailed'
+          $cfg.TestResult.Enabled = $true
+          $cfg.TestResult.OutputFormat = 'NUnitXml'
+          $cfg.TestResult.OutputPath = 'test-results.xml'
+          Invoke-Pester -Configuration $cfg
+
+      - name: Publish test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-results
+          path: test-results.xml

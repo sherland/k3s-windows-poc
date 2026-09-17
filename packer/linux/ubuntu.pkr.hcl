@@ -57,7 +57,7 @@ variable "output_dir" {
 }
 variable "k3s_version" {
   type    = string
-  default = "v1.32.5+k3s1"
+  default = "v1.35.8+k3s1"
 }
 variable "ssh_private_key_file" {
   type    = string
