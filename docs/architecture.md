@@ -29,8 +29,8 @@ Windows 11 Host (Hyper-V)
 │
 ├── Golden base VHDXs (read-only after Packer build)
 │   ├── vhdx/linux-base/                — Ubuntu 24.04 LTS + k3s binary
-│   ├── vhdx/win2022-base/              — WS2022 + containerd v1.7.35 + kubelet
-│   └── vhdx/win2025-base/              — WS2025 + containerd v1.7.35 + kubelet
+│   ├── vhdx/win2022-base/              — WS2022 + containerd v2.3.7 + kubelet
+│   └── vhdx/win2025-base/              — WS2025 + containerd v2.3.7 + kubelet
 │
 └── Node VMs (child differencing disks — vhdx/nodes/)
     ├── k8s-cp-01    (Linux control plane — k3s server)
@@ -153,15 +153,18 @@ is injected as a virtual floppy. WinRM is enabled inside `winrm-setup.ps1` (runs
 
 | Script | What it does |
 |--------|-------------|
-| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v1.7.35, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
+| `packer/windows/scripts/04-install-k8s-binaries.ps1` | Downloads and installs: `containerd.exe` (v2.3.7, pinned), `kubelet.exe`, `kube-proxy.exe`, `kubectl.exe` (all at the k8s version), `flanneld.exe`, `win-bridge.exe`, `win-overlay.exe`, `host-local.exe`, `hns.psm1`. Configures containerd `config.toml`, registers the containerd Windows service. Creates `C:\k\`, `C:\k\cni\`, `C:\k\cni\config\` directories. Writes `C:\k\net-conf.json` for flannel. Writes static kubeconfig path stubs. |
 | `packer/windows/scripts/05-firstboot-setup.ps1` | Writes `C:\k8s-firstboot.ps1` — a PowerShell script that reads `C:\k8s-node-config.json` (injected offline by `Join-Nodes.ps1`), writes actual kubeconfigs and `C:\k\cni\config\cni.conf`, renames the computer, and registers `kubelet` + `kube-proxy` as Windows services. Also creates a `k8s-firstboot` scheduled task (SYSTEM, AtStartup, Trigger=Boot) that runs `k8s-firstboot.ps1` once, logs to `C:\k8s-firstboot-log.txt`, then deletes itself. |
 
 After provisioning, Packer shuts down and the VHDX lands in `vhdx/win2022-base/` or
 `vhdx/win2025-base/`.
 
-> **containerd v1.7.35 pin:** v2.x removed the CRI v1 gRPC API (`runtime.v1.RuntimeService`)
-> that kubelet v1.35 expects. v1.7.35 is the latest v1.x release and is explicitly set in
-> `config/variables.ps1` as `$script:ContainerdVersion = '1.7.35'`.
+> **containerd v2.3.7 pin:** containerd 1.7 reached End of Life 2026-09-30, and Kubernetes 1.36
+> kubelet requires containerd 2.2+/2.3+. CRI v1 is the only CRI gRPC API in 2.x: what actually
+> changes vs. 1.7 is the config.toml schema (v3: `sandbox_image` → `pinned_images.sandbox`,
+> `bin_dir` → `bin_dirs`, new `[plugins.'io.containerd.cri.v1.runtime'/'io.containerd.cri.v1.images']`
+> table names). v2.3.7 (the 2.3 LTS line, supported to 2028-04-30) is explicitly set in
+> `config/variables.ps1` as `$script:ContainerdVersion = '2.3.7'`.
 
 ---
 
@@ -320,7 +323,7 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ## 6. Scenario Comparison — A, B, C, D, E, F
 
-All scenarios use k3s v1.35.8+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
+All scenarios use k3s v1.36.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
 
 ---
@@ -902,7 +905,7 @@ manages Felix configuration via the `FelixConfiguration` CR.
 
 | Component | Version | Notes |
 |-----------|---------|-------|
-| k3s | v1.35.8+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
+| k3s | v1.36.5+k3s1 | API server, scheduler, controller-manager, etcd, kubelet, containerd |
 | containerd | bundled with k3s | Bundled with k3s; manages Linux pod containers |
 | Flannel | embedded | host-gw (Scenarios A, B); disabled for C, D |
 | CoreDNS | embedded | ClusterIP `10.43.0.10` |
@@ -923,10 +926,10 @@ Does **not** run k3s. Uses upstream Kubernetes binaries.
 
 | Binary | Version | Role |
 |--------|---------|------|
-| `kubelet.exe` | v1.35.8 | Node agent; registers with k3s API server |
-| `kube-proxy.exe` | v1.35.8 | kernelspace mode; programs HNS rules |
-| `kubectl.exe` | v1.35.8 | Used by `start-network.ps1` to query pod CIDR |
-| `containerd.exe` | **v1.7.35** (pinned) | Container runtime |
+| `kubelet.exe` | v1.36.5 | Node agent; registers with k3s API server |
+| `kube-proxy.exe` | v1.36.5 | kernelspace mode; programs HNS rules |
+| `kubectl.exe` | v1.36.5 | Used by `start-network.ps1` to query pod CIDR |
+| `containerd.exe` | **v2.3.7** (pinned) | Container runtime |
 
 #### CNI plugins (`C:\k\cni\`)
 

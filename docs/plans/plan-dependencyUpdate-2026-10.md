@@ -218,7 +218,74 @@ deferred item. Separate commit so it can be dropped independently.
 - **kubectl skew** — user is upgrading Chocolatey packages, which should replace the shadowing
   1.32.3; the Phase 0 warning stays as a guard.
 
+## 7a. Findings from the real C2 build (Scenario A, 2026-10-23): lessons for the next offline check
+The §7 offline validation above ran `containerd --config <file> config dump` from an interactive
+`pwsh` 7.6.7 session on the build host. That masked two bugs that only surfaced once
+`03-containerd.ps1` actually ran inside Packer's `powershell` provisioner on the WS2025 VM (which
+runs **Windows PowerShell 5.1**, not `pwsh`; Packer's `powershell` provisioner type never uses
+`pwsh` unless `use_pwsh` is set, which this template doesn't):
+
+1. **Flag order, wrong on the first attempt.** The assertion was first written as
+   `containerd.exe config dump --config <file>`. containerd's `--config` is a *global* flag and
+   must precede the subcommand (`containerd --config <file> config dump`); the reversed form fails
+   immediately with `flag provided but not defined: -config`, which took down every Windows base
+   build (first failure: `[20:15:16] 03-containerd:` in the Packer log). §7 above had already
+   written the *correct* order in prose; the bug was only in the code, not in the design, but
+   nothing had executed that line before Scenario A did.
+2. **`$ErrorActionPreference = 'Stop'` + `2>&1` on a native command throws on stderr alone,
+   independent of exit code, and only on Windows PowerShell 5.1, not pwsh.** containerd always
+   logs a harmless one-line notice to stderr on `config dump` against our `version = 3` file
+   ("Configuration migrated from version 3, use `containerd config migrate` to avoid migration";
+   expected per §7, 2.3's native schema is v4). Merging that into the captured output via `2>&1`
+   while the script has `$ErrorActionPreference = 'Stop'` (set at the top of every provisioner
+   script in this repo) promotes that single stderr line to a terminating `NativeCommandError`,
+   regardless of `$LASTEXITCODE` (confirmed 0 in isolation). Reproduced with
+   `powershell.exe -File test.ps1` on the build host; **did not reproduce under `pwsh`**, which is
+   why the §7 offline check passed. Fix: drop to `$ErrorActionPreference = 'Continue'` for just the
+   `config dump` call, capture `$LASTEXITCODE` immediately after, restore the preference, then
+   check the saved exit code explicitly.
+
+**Lesson for future offline validation of provisioner-script snippets in this repo:** run them
+through `powershell.exe` (Windows PowerShell 5.1), not `pwsh`; the two have materially different
+native-command error semantics, and every Packer `powershell` provisioner here runs 5.1. A pwsh-only
+offline check can pass while the actual provisioner script fails identically every time.
+
+Both bugs were caught by running the real Scenario A build (not by broader test coverage; neither
+is the kind of thing Pester's static checks catch), fixed, and re-verified offline against the real
+v2.3.7 Windows binary under `powershell.exe` before re-running the build. Both fixes are folded
+into the containerd-migration commit (`03-containerd.ps1`) rather than kept as separate fix-up
+commits, since they landed before that commit was ever shared.
+
+After those two fixes, the Windows base build succeeded (containerd 2.3.7 running, config-dump
+assertion passed) and the cluster bootstrapped. Phase 7's Windows-node join timed out waiting for
+`kubelet Running`; diagnosis via a direct `New-PSSession -VMName` into the node found `containerd`
+Running but `kubelet` Stopped, with a System-log `7034` ("terminated unexpectedly") at the same
+timestamp as the pre-reboot `Start-Service` call in `k8s-firstboot.ps1`, almost certainly
+`Restart-Computer` killing the process mid-start rather than a real crash, compounded by `New-Service`
+registering `kubelet` with no failure-recovery action, so `Automatic` startup never retried it after
+the reboot. A manual `Start-Service kubelet` on the node brought it up immediately and cleanly.
+Resuming `Main.ps1` from Phase 8 (skipping the non-idempotent Windows-node join in Phase 7, which
+has no "already joined" check unlike the Linux-worker path) reached **Scenario A: 33/33 PASS**,
+confirming containerd 2.3.7 + kubelet v1.36.5 + k3s v1.36.5+k3s1 work together correctly end-to-end,
+including the Windows pause-pod scheduling check against `registry.k8s.io/pause:3.10.2`.
+
+This also surfaced an unrelated, pre-existing infrastructure bug, independently confirmed and
+written up in `AGENTS.md` (the "Update 2026-10-24" note alongside the existing WS2022 fwlink entry):
+the WS2025 eval ISO fwlink now serves Windows Server **2022** media (confirmed byte-identical via
+MD5 to a known WS2022 ISO after a fresh download), so the node validated above is a WS2022 node
+under a `win2025-base` label, not actually WS2025. `Test-WindowsIsoValid` does not catch this; it
+only checks the ISO mounts and enumerates, not which OS the enumerated images report. There is
+currently no scriptable way to obtain a genuine WS2025 ISO; by user decision this is accepted as a
+documented, separate blocker rather than something this round fixes, since the dependency bump
+itself is what needed validating and it passed.
+
 ## 8. Explicitly out of scope / deferred
 - k3s 1.37 — waits for Cilium 1.21.
 - WS2022 — eval ISO blocker unchanged.
 - Helm/Packer/kubectl host versions — unpinned winget installs; only the skew warning is added.
+- Genuinely WS2025 validation: the WS2025 fwlink currently serves WS2022 media (see §7a); Scenario
+  A's 33/33 PASS validates the dependency bump on WS2022 content under the `win2025-base` label.
+  Revisit once Microsoft fixes the fwlink or a WS2025 ISO is sourced out-of-band.
+- Hardening the kubelet Windows service with failure-recovery actions so `Automatic` startup
+  survives a crash without a reboot — observed as a one-off flake in §7a, not reproduced twice, and
+  outside this round's scope.
