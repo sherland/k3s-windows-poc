@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/04-install-k8s-binaries.ps1
 # Install upstream Kubernetes binaries into the Windows base image:
 #   - kubelet.exe, kube-proxy.exe, kubectl.exe

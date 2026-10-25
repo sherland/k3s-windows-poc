@@ -1,4 +1,4 @@
-# Deep semantic validation of the k8s Hyper-V scripts
+﻿# Deep semantic validation of the k8s Hyper-V scripts
 # Checks: function call graph, script variable references, path cross-refs
 
 Set-Location "C:\Source\docker-windows-poc"

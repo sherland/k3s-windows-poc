@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/New-WindowsNodes.ps1
 # Phase 5 — Create Windows node VMs as differencing disks from golden base(s).
 #

@@ -1,4 +1,4 @@
-# winrm-setup.ps1 — Run from FirstLogonCommands via floppy (A:\winrm-setup.ps1)
+﻿# winrm-setup.ps1 — Run from FirstLogonCommands via floppy (A:\winrm-setup.ps1)
 # Enables WinRM for Packer connectivity. Runs as SYSTEM/Administrator at first logon.
 
 $ErrorActionPreference = 'Continue'

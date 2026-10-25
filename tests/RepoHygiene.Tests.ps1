@@ -26,6 +26,26 @@ Describe 'Shell script line endings' {
     }
 }
 
+Describe 'PowerShell script encoding' {
+    # Windows PowerShell 5.1 (what Packer's powershell provisioner runs, and what a
+    # plain elevated "PowerShell" shortcut launches unless pwsh is explicitly used)
+    # only auto-detects UTF-8 when a BOM is present; without one it falls back to the
+    # system ANSI codepage, which mangles multi-byte characters (e.g. an em-dash)
+    # byte-for-byte. For a script transiting Packer's WinRM upload this doesn't just
+    # garble log output - it can corrupt a string literal into invalid syntax, and
+    # Packer does not fail the build on the resulting parse error (confirmed:
+    # 04-install-k8s-binaries.ps1 silently never installed kubelet.exe this way).
+    # Every .ps1 file with non-ASCII content must carry a UTF-8 BOM so PS 5.1 always
+    # decodes it correctly, regardless of which engine or execution path runs it.
+    It '<_.Name> has a UTF-8 BOM if it contains non-ASCII characters' -ForEach $PsFiles {
+        $bytes = [System.IO.File]::ReadAllBytes($_.FullName)
+        $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+        if ($hasBom) { return }
+        $hasNonAscii = $bytes | Where-Object { $_ -gt 0x7F } | Select-Object -First 1
+        $hasNonAscii | Should -BeNullOrEmpty -Because 'non-ASCII content without a UTF-8 BOM is misread under Windows PowerShell 5.1 - add a BOM (prepend EF BB BF) rather than removing the character'
+    }
+}
+
 Describe 'PowerShell syntax' {
     It 'has at least one PowerShell script to check' {
         $PsFiles.Count | Should -BeGreaterThan 0

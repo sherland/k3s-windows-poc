@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Build-LinuxBase.ps1
 # Phase 2 — Build the Ubuntu golden base VHDX with Packer.
 # OS release comes from config/variables.ps1's $script:UbuntuReleasesBaseUrl (currently 26.04).

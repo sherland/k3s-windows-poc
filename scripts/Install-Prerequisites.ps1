@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Install-Prerequisites.ps1
 # Phase 0 — Ensure all host-side tooling is present.
 # Idempotent: safe to run multiple times.

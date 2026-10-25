@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/03-containerd.ps1
 # Install and configure containerd for Windows with Hyper-V isolation.
 # Environment variable injected by Packer: CONTAINERD_VERSION

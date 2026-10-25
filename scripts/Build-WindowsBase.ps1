@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Build-WindowsBase.ps1
 # Phase 3 — Build Windows Server golden base VHDXs (one per required OS version).
 #

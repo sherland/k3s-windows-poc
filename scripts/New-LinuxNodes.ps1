@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/New-LinuxNodes.ps1
 # Phase 4 — Create all Linux VMs as differencing disks from the golden base.
 #

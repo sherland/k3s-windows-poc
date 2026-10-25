@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Bootstrap-ControlPlane.ps1
 # Phase 6 — Configure k3s server on the control-plane VM and collect cluster
 # credentials for use by worker nodes.

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # tests/BuildWindowsBase.Tests.ps1
 # Unit tests for Test-WindowsIsoValid (scripts/Build-WindowsBase.ps1) — the
 # ISO integrity guard added after a corrupted WS2022 eval ISO download caused

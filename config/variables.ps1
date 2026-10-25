@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # config/variables.ps1
 # Central configuration for the Hyper-V Kubernetes cluster build.
 # Edit this file before running Main.ps1.

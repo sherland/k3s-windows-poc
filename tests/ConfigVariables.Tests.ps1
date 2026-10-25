@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # tests/ConfigVariables.Tests.ps1
 # Sanity checks on config/variables.ps1 — version string shapes and the hard
 # compatibility invariants documented there (e.g. containerd must be >= 2.2
