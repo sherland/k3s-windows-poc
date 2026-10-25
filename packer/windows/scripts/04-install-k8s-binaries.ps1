@@ -339,29 +339,21 @@ foreach ($r in $fwRules) {
 }
 
 # ---------------------------------------------------------------------------
-# Update containerd config.toml with CNI bin/conf directories
-# (03-containerd.ps1 already writes the v3 [plugins.'io.containerd.cri.v1.
-# runtime'.cni] table with these paths; this only covers a config.toml that
-# predates that table, e.g. a base image carried over from before containerd 2.x.)
+# Assert containerd config.toml already has the CNI bin/conf directories.
+# 03-containerd.ps1 runs earlier in this same build and always writes the v3
+# [plugins.'io.containerd.cri.v1.runtime'.cni] table with these paths - there
+# is no supported path where this step runs without that one having already
+# happened, so fail loudly here instead of silently patching a config that
+# should never be missing this table.
 # ---------------------------------------------------------------------------
 $containerdConf = 'C:\containerd\config\config.toml'
-if (Test-Path $containerdConf) {
-    $cfg = Get-Content $containerdConf -Raw
-    $cniSection = "[plugins.'io.containerd.cri.v1.runtime'.cni]"
-    if ($cfg -notmatch [regex]::Escape($cniSection)) {
-        $CniBinEsc  = $CniBinDir  -replace '\\', '\\\\'
-        $CniConfEsc = $CniConfDir -replace '\\', '\\\\'
-        $cfg += "`n$cniSection`n  bin_dirs = ['$CniBinEsc']`n  conf_dir = '$CniConfEsc'`n"
-        Set-Content -Path $containerdConf -Value $cfg -Encoding ascii
-        Write-Log "04-install-k8s-binaries: Added [cni] section to containerd config.toml"
-        Restart-Service containerd -Force
-        Start-Sleep -Seconds 5
-        Write-Log "04-install-k8s-binaries: containerd restarted"
-    } else {
-        Write-Log "04-install-k8s-binaries: containerd config.toml already has [cni] section"
-    }
-} else {
-    Write-Log "04-install-k8s-binaries: WARNING - $containerdConf not found"
+if (-not (Test-Path $containerdConf)) {
+    throw "04-install-k8s-binaries: $containerdConf not found - 03-containerd.ps1 should have created it"
+}
+$cfg = Get-Content $containerdConf -Raw
+$cniSection = "[plugins.'io.containerd.cri.v1.runtime'.cni]"
+if ($cfg -notmatch [regex]::Escape($cniSection)) {
+    throw "04-install-k8s-binaries: $containerdConf is missing $cniSection - 03-containerd.ps1's generated config should always have it"
 }
 
 # ---------------------------------------------------------------------------

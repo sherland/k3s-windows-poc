@@ -74,32 +74,30 @@ foreach ($hclFile in @('packer\linux\ubuntu.pkr.hcl','packer\windows\winserver.p
 }
 
 # -------------------------------------------------------------------
-# 4. Build-LinuxVM.ps1 — -var flags match HCL variable names
+# 4. Build-LinuxBase.ps1 / Build-WindowsBase.ps1 — -var flags match HCL variable names
 # -------------------------------------------------------------------
 Write-Host "`n=== 4. Packer -var flag names match HCL declarations ===" -ForegroundColor Cyan
 $linuxHcl    = Get-Content packer\linux\ubuntu.pkr.hcl -Raw
-$linuxScript = Get-Content scripts\Build-LinuxVM.ps1 -Raw
+$linuxScript = Get-Content scripts\Build-LinuxBase.ps1 -Raw
 $hclVarsL    = [regex]::Matches($linuxHcl, '^variable\s+"(\w+)"','Multiline') |
                ForEach-Object { $_.Groups[1].Value }
-$usedVarsL   = [regex]::Matches($linuxScript, '"-var"[^"]*"(\w+)=') |  # not ideal — use next pattern
-               ForEach-Object { $_.Groups[1].Value }
-# Better: find -var "name=value" patterns
+# Find -var "name=value" patterns
 $varFlags    = [regex]::Matches($linuxScript, '`-var\s+"(\w+)=') |
                ForEach-Object { $_.Groups[1].Value }
 foreach ($v in $varFlags) {
     if ($hclVarsL -contains $v) { Pass "Linux -var `"$v`" matched" }
-    else { Warn 'Build-LinuxVM.ps1' "-var `"$v`" has no matching HCL variable" }
+    else { Warn 'Build-LinuxBase.ps1' "-var `"$v`" has no matching HCL variable" }
 }
 
 $winHcl      = Get-Content packer\windows\winserver.pkr.hcl -Raw
-$winScript   = Get-Content scripts\Build-WindowsVM.ps1 -Raw
+$winScript   = Get-Content scripts\Build-WindowsBase.ps1 -Raw
 $hclVarsW    = [regex]::Matches($winHcl, '^variable\s+"(\w+)"','Multiline') |
                ForEach-Object { $_.Groups[1].Value }
 $varFlagsW   = [regex]::Matches($winScript, '`-var\s+"(\w+)=') |
                ForEach-Object { $_.Groups[1].Value }
 foreach ($v in $varFlagsW) {
     if ($hclVarsW -contains $v) { Pass "Windows -var `"$v`" matched" }
-    else { Warn 'Build-WindowsVM.ps1' "-var `"$v`" has no matching HCL variable" }
+    else { Warn 'Build-WindowsBase.ps1' "-var `"$v`" has no matching HCL variable" }
 }
 
 # -------------------------------------------------------------------

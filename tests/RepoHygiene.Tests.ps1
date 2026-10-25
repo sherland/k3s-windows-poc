@@ -123,13 +123,13 @@ Describe 'Version pin consistency (config/variables.ps1 vs. fallback defaults)' 
     }
 
     Context 'flannel / windows-container-networking versions' {
-        It '<_> fallback FlannelVersion default matches FlannelVersion' -ForEach @('04-install-k8s-binaries.ps1', '04-k3s-agent.ps1') {
-            $content = Get-Content -Raw (Join-Path $RepoRoot "packer\windows\scripts\$_")
+        It 'fallback FlannelVersion default matches FlannelVersion' {
+            $content = Get-Content -Raw (Join-Path $RepoRoot 'packer\windows\scripts\04-install-k8s-binaries.ps1')
             $content | Should -Match ([regex]::Escape("else { '$script:FlannelVersion' }"))
         }
 
-        It '<_> fallback WinCniVersion default matches WinsCniVersion' -ForEach @('04-install-k8s-binaries.ps1', '04-k3s-agent.ps1') {
-            $content = Get-Content -Raw (Join-Path $RepoRoot "packer\windows\scripts\$_")
+        It 'fallback WinCniVersion default matches WinsCniVersion' {
+            $content = Get-Content -Raw (Join-Path $RepoRoot 'packer\windows\scripts\04-install-k8s-binaries.ps1')
             $content | Should -Match ([regex]::Escape("else { '$script:WinsCniVersion' }"))
         }
 
@@ -157,8 +157,8 @@ Describe 'Version pin consistency (config/variables.ps1 vs. fallback defaults)' 
     }
 
     Context 'Antrea version' {
-        It '<_> fallback AntreaVersion default matches AntreaVersion' -ForEach @('packer\windows\scripts\05-firstboot-setup.ps1', 'scripts\Join-Nodes.ps1') {
-            $content = Get-Content -Raw (Join-Path $RepoRoot $_)
+        It '05-firstboot-setup.ps1 fallback AntreaVersion default matches AntreaVersion' {
+            $content = Get-Content -Raw (Join-Path $RepoRoot 'packer\windows\scripts\05-firstboot-setup.ps1')
             $content | Should -Match ([regex]::Escape("else { '$script:AntreaVersion' }"))
         }
     }

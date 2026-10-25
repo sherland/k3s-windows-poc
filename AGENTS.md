@@ -142,9 +142,6 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `Run-AllScenarios.ps1` | Working | Runs all (or a subset of) scenarios A–F end-to-end; accepts `-Scenarios`, `-NoExtraWorker`, `-DeleteGoldenImages`, `-CleanupAfterAll` |
 | `Run-ScenarioE.ps1` | Working | End-to-end: Flannel + chained Cilium + CP + Linux + Windows worker |
 | `Run-ScenarioF.ps1` | Working | End-to-end: Antrea OVS + CP + Linux + Windows worker (WS2025) |
-| `Build-LinuxVM.ps1` | Legacy | Superseded (kept for reference) |
-| `Build-WindowsVM.ps1` | Legacy | Superseded (kept for reference) |
-| `Join-WindowsNode.ps1` | Legacy | Superseded (kept for reference) |
 | `Update-KubeConfig.ps1` | Working | Patches `output/kubeconfig.yaml` with current control-plane VM IP, and updates `K3S_URL` + restarts `k3s-agent` on all Linux workers, after a network change |
 | `Scale-LinuxWorkers.ps1` | Working | Post-cluster scaling — scale-up creates new VMs + joins them; scale-down drains, deletes node object, stops k3s-agent, removes VM + VHDX + seed ISO + sentinels; patches `$script:LinuxWorkerCount` in `config/variables.ps1` after each node |
 | `Test-ScaleLinuxWorkers.ps1` | Working | End-to-end test for `Scale-LinuxWorkers.ps1` — runs fixed sequence (0→4→3→1), asserts 6 invariants per step (kubectl nodes, Hyper-V VMs, variables.ps1, sentinels, VHDXs, seed ISOs), restores original count after run |
