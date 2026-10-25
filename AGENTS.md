@@ -156,6 +156,7 @@ All VMs share an external vSwitch (`k8s-external`) with DHCP IPs from router.
 | `packer/windows/winserver.pkr.hcl` | Windows base — uses `os_version` var + `floppy_dirs` |
 | `packer/windows/autounattend/2022/autounattend.xml` | WS2022 answer file |
 | `packer/windows/autounattend/2025/autounattend.xml` | WS2025 answer file |
+| `packer/windows/scripts/03-containerd.ps1` | Installs containerd v2.3.7, writes v3-schema `config.toml`, asserts the dumped effective config at build time |
 | `packer/windows/scripts/04-install-k8s-binaries.ps1` | Installs binaries + static config (no kubeconfigs, no kubelet svc) |
 | `packer/windows/scripts/05-firstboot-setup.ps1` | Creates k8s-firstboot.ps1 template + scheduled task |
 
