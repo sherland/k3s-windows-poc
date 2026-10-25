@@ -55,11 +55,11 @@ variable "output_dir" {
   type    = string
   default = "../../vhdx/windows-base"
 }
-# Kubernetes version string (no +k3sN suffix), e.g. v1.35.8
+# Kubernetes version string (no +k3sN suffix), e.g. v1.36.5
 # Used to download upstream kubelet.exe and kube-proxy.exe from dl.k8s.io
 variable "k8s_version" {
   type    = string
-  default = "v1.35.8"
+  default = "v1.36.5"
 }
 variable "cluster_dns_ip" {
   type    = string

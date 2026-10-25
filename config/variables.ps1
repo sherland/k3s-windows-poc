@@ -66,10 +66,12 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # actually changes vs. 1.7 is the config.toml schema (v3: [plugins."io.containerd.
 # cri.v1.runtime"/"io.containerd.cri.v1.images"], sandbox_image -> pinned_images.sandbox,
 # bin_dir -> bin_dirs). 2.2+/2.3+ is required by Kubernetes 1.36 kubelet.
-# Compatible range: Cilium 1.20 supports k8s 1.33–1.36; Calico 3.33 supports k8s 1.35–1.37.
-# Intersection: k8s 1.35–1.36. k3s v1.35.8+k3s1 (Kubernetes 1.35) is the latest compatible.
+# Compatible range: Cilium 1.20 supports k8s 1.33–1.36; Calico 3.33 supports k8s 1.35–1.37;
+# Antrea has no stated ceiling. Intersection: k8s 1.36. k3s v1.36.5+k3s1 (latest 1.36 patch)
+# is the latest compatible. k3s v1.37.x is NOT usable here until Cilium ships a 1.37-compatible
+# minor (Cilium 1.20 tops out at k8s 1.36).
 # -----------------------------------------------------------------------------
-$script:K3sVersion        = 'v1.35.8+k3s1'
+$script:K3sVersion        = 'v1.36.5+k3s1'
 $script:ContainerdVersion = '2.3.7'
 $script:FlannelVersion    = 'v0.28.10'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
