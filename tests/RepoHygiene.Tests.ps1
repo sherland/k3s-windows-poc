@@ -144,6 +144,25 @@ Describe 'Version pin consistency (config/variables.ps1 vs. fallback defaults)' 
         }
     }
 
+    Context 'containernetworking/plugins version' {
+        It '04-install-k8s-binaries.ps1 fallback CniPluginsVersion default matches CniPluginsVersion' {
+            $content = Get-Content -Raw (Join-Path $RepoRoot 'packer\windows\scripts\04-install-k8s-binaries.ps1')
+            $content | Should -Match ([regex]::Escape("else { '$script:CniPluginsVersion' }"))
+        }
+
+        It 'winserver.pkr.hcl cni_plugins_version default matches CniPluginsVersion' {
+            $content = Get-Content -Raw (Join-Path $RepoRoot 'packer\windows\winserver.pkr.hcl')
+            $content | Should -Match ([regex]::Escape("default = `"$script:CniPluginsVersion`""))
+        }
+    }
+
+    Context 'Antrea version' {
+        It '<_> fallback AntreaVersion default matches AntreaVersion' -ForEach @('packer\windows\scripts\05-firstboot-setup.ps1', 'scripts\Join-Nodes.ps1') {
+            $content = Get-Content -Raw (Join-Path $RepoRoot $_)
+            $content | Should -Match ([regex]::Escape("else { '$script:AntreaVersion' }"))
+        }
+    }
+
     Context 'multus-cni image tag' {
         It 'multus-daemonset.yaml image tags match MultusVersion' {
             $content = Get-Content -Raw (Join-Path $RepoRoot 'config\cni\multus-daemonset.yaml')

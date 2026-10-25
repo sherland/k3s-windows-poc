@@ -1,7 +1,7 @@
 # =============================================================================
 # Run-ScenarioF.ps1
 # Test Case F: 1 control-plane + 2 Linux workers + 1 Windows node (WS2025)
-#              CNI: Antrea v2.6.2 (VMware / Open vSwitch — unified Linux + Windows)
+#              CNI: Antrea v2.7.0 (VMware / Open vSwitch — unified Linux + Windows)
 #
 # Antrea replaces Flannel entirely (k3s is launched with --flannel-backend=none).
 # Linux nodes are managed by the Antrea Helm chart (antrea-agent DaemonSet).

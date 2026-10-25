@@ -242,7 +242,7 @@ if ($cfg.PSObject.Properties['cniPlugin'] -and $cfg.cniPlugin -eq 'antrea') {
     # Create Antrea helper directory and download version-matched scripts.
     $AntreaDir = 'C:\k\antrea'
     $null = New-Item -ItemType Directory -Force -Path $AntreaDir
-    $AntreaVersion = if ($cfg.PSObject.Properties['antreaVersion'] -and $cfg.antreaVersion) { $cfg.antreaVersion } else { '2.6.2' }
+    $AntreaVersion = if ($cfg.PSObject.Properties['antreaVersion'] -and $cfg.antreaVersion) { $cfg.antreaVersion } else { '2.7.0' }
     $AntreaTag = "v${AntreaVersion}"
     foreach ($HelperScript in @('Prepare-AntreaAgent.ps1', 'Clean-AntreaNetwork.ps1')) {
         $ScriptUrl = "https://raw.githubusercontent.com/antrea-io/antrea/${AntreaTag}/hack/windows/${HelperScript}"

@@ -22,8 +22,9 @@
 #   CLUSTER_DNS_IP    - CoreDNS cluster IP   (default: 10.43.0.10)
 #   CLUSTER_CIDR      - Pod CIDR             (default: 10.42.0.0/16)
 #   SERVICE_CIDR      - Service CIDR         (default: 10.43.0.0/16)
-#   FLANNEL_VERSION   - flannel release tag  (default: v0.28.9)
+#   FLANNEL_VERSION   - flannel release tag  (default: v0.28.10)
 #   WINS_CNI_VERSION  - windows-container-networking release (default: v0.3.3)
+#   CNI_PLUGINS_VERSION - containernetworking/plugins release, host-local IPAM (default: v1.9.1)
 # =============================================================================
 
 Set-StrictMode -Version Latest
@@ -35,8 +36,9 @@ $K8sVersion    = $env:K8S_VERSION;   if (-not $K8sVersion)  { throw 'K8S_VERSION
 $ClusterDnsIp  = if ($env:CLUSTER_DNS_IP)   { $env:CLUSTER_DNS_IP }   else { '10.43.0.10' }
 $ClusterCidr   = if ($env:CLUSTER_CIDR)     { $env:CLUSTER_CIDR }     else { '10.42.0.0/16' }
 $ServiceCidr   = if ($env:SERVICE_CIDR)     { $env:SERVICE_CIDR }     else { '10.43.0.0/16' }
-$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.9' }
+$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.10' }
 $WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.3' }
+$CniPluginsVersion = if ($env:CNI_PLUGINS_VERSION) { $env:CNI_PLUGINS_VERSION } else { 'v1.9.1' }
 
 $KDir          = 'C:\k'
 $CniBinDir     = 'C:\k\cni'
@@ -134,8 +136,8 @@ if (-not (Test-Path $HnsPsmPath)) {
 # host-local IPAM from containernetworking/plugins
 if (-not (Test-Path $HostLocalPath)) {
     $tgz = "$env:TEMP\cni-plugins.tgz"
-    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-windows-amd64-v1.9.1.tgz'
-    Write-Log "04-install-k8s-binaries: Downloading host-local IPAM plugin"
+    $url = "https://github.com/containernetworking/plugins/releases/download/$CniPluginsVersion/cni-plugins-windows-amd64-$CniPluginsVersion.tgz"
+    Write-Log "04-install-k8s-binaries: Downloading host-local IPAM plugin (CNI plugins $CniPluginsVersion)"
     curl.exe -fsSL -L -o $tgz $url
     if ($LASTEXITCODE -ne 0) { throw "Download failed: cni-plugins from $url" }
     tar.exe -xzf $tgz -C $CniBinDir 2>&1 | Out-Null

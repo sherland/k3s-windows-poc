@@ -9,7 +9,7 @@ packer {
   required_version = ">= 1.10.0"
   required_plugins {
     hyperv = {
-      version = ">= 1.1.3"
+      version = ">= 1.1.5"
       source  = "github.com/hashicorp/hyperv"
     }
   }
@@ -75,11 +75,15 @@ variable "service_cidr" {
 }
 variable "flannel_version" {
   type    = string
-  default = "v0.28.9"
+  default = "v0.28.10"
 }
 variable "wins_cni_version" {
   type    = string
   default = "v0.3.3"
+}
+variable "cni_plugins_version" {
+  type    = string
+  default = "v1.9.1"
 }
 variable "containerd_version" {
   type    = string
@@ -166,7 +170,8 @@ build {
       "CLUSTER_CIDR=${var.cluster_cidr}",
       "SERVICE_CIDR=${var.service_cidr}",
       "FLANNEL_VERSION=${var.flannel_version}",
-      "WINS_CNI_VERSION=${var.wins_cni_version}"
+      "WINS_CNI_VERSION=${var.wins_cni_version}",
+      "CNI_PLUGINS_VERSION=${var.cni_plugins_version}"
     ]
   }
 
