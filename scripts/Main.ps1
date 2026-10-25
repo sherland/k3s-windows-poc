@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Main.ps1
 # Orchestrator — runs all phases in order to build the Hyper-V k3s cluster.
 #
@@ -168,6 +168,14 @@ function Invoke-Phase {
             # For Cilium: apply CNI (Phase 8) before joining workers (Phase 7)
             # because nodes stay NotReady until Cilium provides networking.
             if ($script:CNIPlugin -in @('cilium', 'calico', 'antrea') -and $PhaseNum -eq 7) {
+                # Initialize explicitly: if Apply-CNI.ps1 takes its "already complete" skip
+                # path, it runs no native command, so $LASTEXITCODE would otherwise still be
+                # whatever it was before this call - unset entirely under Set-StrictMode in a
+                # fresh process (e.g. resuming via -StartFromPhase 7), which throws just trying
+                # to read it. Must target global scope explicitly: a bare assignment here creates
+                # a local shadow of the automatic variable, so the check below would always read
+                # back 0 regardless of what Apply-CNI.ps1's native commands actually set globally.
+                $global:LASTEXITCODE = 0
                 & "$ScriptDir\Apply-CNI.ps1" -Force:$Forced
                 if ($LASTEXITCODE -ne 0) { throw "Apply-CNI ($($script:CNIPlugin) pre-join) failed" }
             }

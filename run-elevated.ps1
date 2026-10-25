@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # run-elevated.ps1
 # Launches Main.ps1 (or any specified script) in an elevated PowerShell process
 # and tees all output to output\run.log so it can be monitored from a

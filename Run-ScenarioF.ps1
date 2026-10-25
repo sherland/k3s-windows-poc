@@ -1,7 +1,7 @@
-# =============================================================================
+﻿# =============================================================================
 # Run-ScenarioF.ps1
 # Test Case F: 1 control-plane + 2 Linux workers + 1 Windows node (WS2025)
-#              CNI: Antrea v2.6.2 (VMware / Open vSwitch — unified Linux + Windows)
+#              CNI: Antrea v2.7.0 (VMware / Open vSwitch — unified Linux + Windows)
 #
 # Antrea replaces Flannel entirely (k3s is launched with --flannel-backend=none).
 # Linux nodes are managed by the Antrea Helm chart (antrea-agent DaemonSet).
@@ -65,7 +65,7 @@ $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @(`n    @{ Count = 1; OSVersion = '2025'; CPU = 4; RAM = 7168 }`n)"
 
-Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($configPath, $cfg.TrimEnd(), [System.Text.UTF8Encoding]::new($true))
 Write-Host "[OK] config/variables.ps1 → CNI=antrea, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=1×WS2025" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------

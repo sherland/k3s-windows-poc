@@ -4,12 +4,15 @@ Automates building a configurable k3s cluster on a single Windows 11 host using 
 
 | Scenario | Script | CNI | Nodes | Verified |
 |----------|--------|-----|-------|---------|
-| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2025) | 33/33 PASS (04:38) |
-| B | `Run-ScenarioB.ps1` | Multus v4.3.1 + Flannel + macvlan | CP + 2 Linux | 39/39 PASS (04:28) |
-| C | `Run-ScenarioC.ps1` | Cilium v1.20.1 + Hubble | CP + 2 Linux | 33/33 PASS (05:40) |
-| D | `Run-ScenarioD.ps1` | Calico v3.32.2 | CP + 2 Linux | 30/30 PASS (05:24) |
-| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2025) | 40/40 PASS (06:35) |
-| F | `Run-ScenarioF.ps1` | Antrea v2.7.0 (OVS, unified Linux + Windows) | CP + 2 Linux + 1 Windows (WS2025) | 43/43 PASS (07:07) |
+| A | `Run-ScenarioA.ps1` | Flannel (embedded) | CP + 2 Linux + 1 Windows (WS2025\*) | 33/33 PASS\* |
+| B | `Run-ScenarioB.ps1` | Multus v4.3.1 + Flannel + macvlan | CP + 2 Linux | 39/39 PASS (04:12) |
+| C | `Run-ScenarioC.ps1` | Cilium v1.20.4 + Hubble | CP + 2 Linux | 33/33 PASS (05:42) |
+| D | `Run-ScenarioD.ps1` | Calico v3.33.0 | CP + 2 Linux | 30/30 PASS (05:18) |
+| E | `Run-ScenarioE.ps1` | Flannel + chained Cilium + Hubble | CP + 2 Linux + 1 Windows (WS2025\*) | 40/40 PASS (06:18) |
+| F | `Run-ScenarioF.ps1` | Antrea v2.7.0 (OVS, unified Linux + Windows) | CP + 2 Linux + 1 Windows (WS2025\*) | 43/43 PASS (06:36) |
+
+\* Re-validated 2026-10-24 on k3s v1.36.5+k3s1 / containerd 2.3.7 / kubelet v1.36.5; see `AGENTS.md`
+for why Scenario A has no single elapsed time and why "WS2025" nodes currently run WS2022 content.
 
 Architecture uses **Hyper-V differencing disks**: golden base VHDXs are built once by Packer, then each node VM gets a child differencing disk created in seconds.
 
@@ -200,7 +203,7 @@ Scale-down sequence per node: `kubectl cordon` → `kubectl drain` → `kubectl 
 |-------|--------|-------------|-----------------|
 | 0 | `Install-Prerequisites.ps1` | Hyper-V, Packer, kubectl, OpenSSH, Windows ADK | < 5 min |
 | 1 | `New-HyperVSwitch.ps1` | Create external vSwitch | < 1 min |
-| BASE-L | `Build-LinuxBase.ps1` | Packer builds Ubuntu 24.04 + k3s binary | 7–10 min |
+| BASE-L | `Build-LinuxBase.ps1` | Packer builds Ubuntu 26.04 + k3s binary | 7–14 min |
 | BASE-W | `Build-WindowsBase.ps1` | Packer builds WS2022 + containerd + kubelet | 15–25 min |
 | 4 | `New-LinuxNodes.ps1` | Differencing disks + cloud-init seed ISOs | < 1 min |
 | 5 | `New-WindowsNodes.ps1` | Differencing disks for Windows nodes | < 1 min |
@@ -242,9 +245,9 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 │   ├── variables.ps1          # Single source of truth: versions, topology, credentials
 │   └── cni/
 │       ├── multus-daemonset.yaml      # Multus v4.3.1 DaemonSet manifest
-│       ├── cilium-values.yaml         # Cilium v1.20.1 Helm values (Hubble enabled)
+│       ├── cilium-values.yaml         # Cilium v1.20.4 Helm values (Hubble enabled)
 │       ├── cilium-chained-values.yaml # Cilium chained-mode values for Scenario E
-│       ├── calico-values.yaml         # Calico v3.32.2 tigera-operator Helm values
+│       ├── calico-values.yaml         # Calico v3.33.0 tigera-operator Helm values
 │       └── antrea-values.yaml         # Antrea v2.7.0 Helm values (VXLAN, Linux nodeSelector)
 ├── docs/
 │   └── architecture.md        # Component layout, networking, build sequence
@@ -257,7 +260,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 │   ├── seed-isos/             # Per-node cloud-init ISOs
 │   └── sentinels/             # Phase completion markers
 ├── packer/
-│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 24.04 + k3s binary base image
+│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 26.04 + k3s binary base image
 │   └── windows/winserver.pkr.hcl  # WS2022/WS2025 + containerd + kubelet base image
 ├── scripts/
 │   ├── Main.ps1               # 10-phase orchestrator
@@ -294,6 +297,6 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 | `kubectl` can't connect | Verify `$env:KUBECONFIG` points to `output/kubeconfig.yaml`; check `output/linux-vm-ip.txt`. |
 | Wrong NIC for vSwitch | Set `$script:HostNicName` in `config/variables.ps1`. |
 | SSH key mismatch after rebuild | Delete `output/linux-build-key*` and re-run — `Build-LinuxBase.ps1` regenerates and patches user-data automatically. |
-| containerd v2.x error | Must use v1.7.x — v2.x removed the CRI v1 API required by kubelet. Pin is in `config/variables.ps1`. |
+| containerd config errors on Windows | containerd (Windows) is pinned to v2.3.7 (the 2.3 LTS line) using the v3 config.toml schema. Pin is in `config/variables.ps1`; `03-containerd.ps1` asserts the effective config at build time. |
 
 See [`docs/architecture.md`](docs/architecture.md) for full component layout, networking internals, and build sequence.

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/03-containerd.ps1
 # Install and configure containerd for Windows with Hyper-V isolation.
 # Environment variable injected by Packer: CONTAINERD_VERSION
@@ -11,8 +11,8 @@ function Write-Log { param([string]$Msg) Write-Host "[$(Get-Date -f HH:mm:ss)] $
 
 $ContainerdVersion = $env:CONTAINERD_VERSION
 if (-not $ContainerdVersion -or $ContainerdVersion -eq 'latest') {
-    # Default to latest 1.7.x — kubelet v1.35 requires CRI v1 gRPC API which was removed in containerd v2.x
-    $ContainerdVersion = '1.7.35'
+    # Default to the 2.3 LTS line (1.7 reached EOL 2026-09-30; 2.2+/2.3+ required by k8s 1.36 kubelet)
+    $ContainerdVersion = '2.3.7'
 }
 Write-Log "03-containerd: Using containerd v$ContainerdVersion"
 
@@ -53,9 +53,9 @@ if ($currentPath -notlike "*$BinDir*") {
 }
 
 # ---------------------------------------------------------------------------
-# Generate config — write a clean v1.7-compatible config.toml directly.
-# Do NOT use `containerd config default` which on v1.7 produces a format
-# incompatible with what kubelet v1.32 expects.
+# Generate config - write a v3-schema config.toml directly (containerd 2.x).
+# Do NOT use `containerd config default`, which pulls in the full set of
+# built-in plugins/defaults rather than the minimal CRI-focused config below.
 # ---------------------------------------------------------------------------
 $configDir  = "$InstallDir\config"
 $configFile = "$configDir\config.toml"
@@ -63,23 +63,47 @@ $null = New-Item -ItemType Directory -Force -Path $configDir
 
 Write-Log "03-containerd: Generating containerd config.toml..."
 @"
-version = 2
-root    = "C:\\ProgramData\\containerd\\root"
-state   = "C:\\ProgramData\\containerd\\state"
+version = 3
+root  = 'C:\ProgramData\containerd\root'
+state = 'C:\ProgramData\containerd\state'
 
-[plugins]
-  [plugins."io.containerd.grpc.v1.cri"]
-    sandbox_image = "mcr.microsoft.com/oss/kubernetes/pause:3.9"
-    [plugins."io.containerd.grpc.v1.cri".containerd]
-      default_runtime_name = "runhcs-wcow-process"
-      [plugins."io.containerd.grpc.v1.cri".containerd.runtimes]
-        [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runhcs-wcow-process]
-          runtime_type = "io.containerd.runhcs.v1"
-    [plugins."io.containerd.grpc.v1.cri".cni]
-      bin_dir  = "C:\\k\\cni"
-      conf_dir = "C:\\k\\cni\\config"
+[plugins.'io.containerd.cri.v1.images'.pinned_images]
+  sandbox = 'registry.k8s.io/pause:3.10.2'
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd]
+  default_runtime_name = 'runhcs-wcow-process'
+  [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runhcs-wcow-process]
+    runtime_type = 'io.containerd.runhcs.v1'
+
+[plugins.'io.containerd.cri.v1.runtime'.cni]
+  bin_dirs = ['C:\k\cni']
+  conf_dir = 'C:\k\cni\config'
 "@ | Set-Content -Path $configFile -Encoding ascii
 Write-Log "03-containerd: config.toml written"
+
+# containerd silently falls back to its built-in defaults (bin dir under
+# "C:\Program Files\containerd\cni\bin") when --config points at a missing or
+# unreadable file - a log-only check would not catch a wrong path, so assert
+# the dumped effective config instead.
+# containerd writes a harmless "config migrated" notice to stderr; under
+# $ErrorActionPreference = 'Stop' (Windows PowerShell 5.1, which is what
+# Packer's powershell provisioner actually runs), capturing stderr via 2>&1
+# promotes that notice to a terminating error regardless of exit code - drop
+# to 'Continue' for just this call and check $LASTEXITCODE explicitly instead.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$dumpLines = & "$BinDir\containerd.exe" --config $configFile config dump 2>&1
+$dumpExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
+if ($dumpExit -ne 0) { throw "containerd config dump failed (exit $dumpExit): $dumpLines" }
+$dump = $dumpLines -join "`n"
+if ($dump -notmatch 'bin_dirs' -or $dump -notmatch [regex]::Escape('C:\k\cni')) {
+    throw "containerd effective config does not have the expected CNI bin_dirs. Dump:`n$dump"
+}
+if ($dump -notmatch [regex]::Escape('registry.k8s.io/pause:3.10.2')) {
+    throw "containerd effective config does not have the expected pinned sandbox image. Dump:`n$dump"
+}
+Write-Log "03-containerd: config dump verified (bin_dirs + pinned sandbox image)"
 
 # ---------------------------------------------------------------------------
 # Install as Windows Service

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Scale-LinuxWorkers.ps1
 # Scale Linux worker nodes up or down in a running k3s cluster.
 #
@@ -75,7 +75,7 @@ function Set-LinuxWorkerCount {
     $varPath = Join-Path $PSScriptRoot 'config\variables.ps1'
     $raw     = Get-Content $varPath -Raw
     $updated = $raw -replace '(\$script:LinuxWorkerCount\s*=\s*)\d+', "`${1}$Count"
-    Set-Content -Path $varPath -Value $updated -NoNewline
+    [System.IO.File]::WriteAllText($varPath, $updated, [System.Text.UTF8Encoding]::new($true))
     Write-Success "variables.ps1 updated: LinuxWorkerCount = $Count"
 }
 

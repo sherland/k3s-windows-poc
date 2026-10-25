@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Export-KubeConfig.ps1
 # Phase 5 — Pull kubeconfig from the Linux VM, patch the server IP, and write
 # output/kubeconfig.yaml + output/cluster-info.txt.

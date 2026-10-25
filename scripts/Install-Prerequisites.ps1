@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Install-Prerequisites.ps1
 # Phase 0 — Ensure all host-side tooling is present.
 # Idempotent: safe to run multiple times.
@@ -90,6 +90,42 @@ function Install-OpenSSHClient {
 }
 
 # ---------------------------------------------------------------------------
+function Test-KubectlVersionSkew {
+    # Multiple kubectl installs (winget, Chocolatey, manual PATH entries, ...) can
+    # shadow each other; whichever one PATH resolves first is what actually runs
+    # against the cluster, which may not be the one winget just installed/updated.
+    # kubectl's skew policy tolerates +-1 minor against the server - warn (don't
+    # fail) when the resolved client is further away, and print the resolved path
+    # so a shadowing install is easy to spot and remove.
+    $cmd = Get-Command kubectl -ErrorAction SilentlyContinue
+    if (-not $cmd) { return }
+
+    $raw = (kubectl version --client --output=yaml 2>&1) | Out-String
+    if ($raw -notmatch 'gitVersion:\s*["'']?v(\d+)\.(\d+)\.') {
+        Write-Warn "Could not parse kubectl client version from: $raw"
+        return
+    }
+    $clientMajor = [int]$Matches[1]
+    $clientMinor = [int]$Matches[2]
+
+    if ($script:K3sVersion -notmatch '^v(\d+)\.(\d+)\.') {
+        Write-Warn "Could not parse K3sVersion '$script:K3sVersion' to check kubectl skew"
+        return
+    }
+    $serverMajor = [int]$Matches[1]
+    $serverMinor = [int]$Matches[2]
+
+    $skew = [Math]::Abs($clientMinor - $serverMinor)
+    if ($clientMajor -ne $serverMajor -or $skew -gt 1) {
+        Write-Warn ("kubectl client v$clientMajor.$clientMinor is more than 1 minor away from " +
+            "K3sVersion $script:K3sVersion (server v$serverMajor.$serverMinor). Resolved from: $($cmd.Source). " +
+            "This can happen when another kubectl install (e.g. Chocolatey) shadows winget's on PATH.")
+    } else {
+        Write-Success "kubectl client v$clientMajor.$clientMinor is within skew of K3sVersion $script:K3sVersion (resolved: $($cmd.Source))"
+    }
+}
+
+# ---------------------------------------------------------------------------
 function Assert-Phase0Complete {
     Write-Step 'Verifying Phase 0...'
 
@@ -158,6 +194,9 @@ function Invoke-Phase0 {
     Invoke-Step 'Install kubectl' {
         Install-WingetPackage -Id $script:KubectlWingetId -DisplayName 'kubectl' -BinaryName 'kubectl'
     }
+
+    # --- kubectl version skew (non-fatal; see Test-KubectlVersionSkew) ---
+    Invoke-Step 'Check kubectl version skew' { Test-KubectlVersionSkew }
 
     # --- OpenSSH client ---
     Invoke-Step 'Install OpenSSH client' { Install-OpenSSHClient }

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/01-base.ps1
 # Base configuration for Windows Server — runs early in Packer provisioning.
 # =============================================================================
@@ -23,8 +23,10 @@ try {
 Write-Log "01-base: ExecutionPolicy is now: $(Get-ExecutionPolicy -Scope LocalMachine)"
 
 # ---------------------------------------------------------------------------
-# Disable Windows Firewall for provisioning
-# (will be re-enabled selectively by 04-k3s-agent.ps1)
+# Disable Windows Firewall for provisioning.
+# Stays disabled for the life of the node. 04-install-k8s-binaries.ps1 adds
+# specific allow rules (kubelet API, NodePort ranges) but never re-enables
+# the profile; Antrea nodes additionally require it to stay off at runtime.
 # ---------------------------------------------------------------------------
 Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False
 Write-Log '01-base: Firewall disabled for provisioning'

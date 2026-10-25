@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Verify-Cluster.ps1
 # Phase 10 — End-to-end cluster verification.
 #
@@ -822,7 +822,7 @@ spec:
     name: windows
   containers:
     - name: pause
-      image: mcr.microsoft.com/oss/kubernetes/pause:3.9
+      image: registry.k8s.io/pause:3.10.2
       resources:
         requests:
           cpu: "10m"

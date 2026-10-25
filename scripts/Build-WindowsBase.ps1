@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Build-WindowsBase.ps1
 # Phase 3 — Build Windows Server golden base VHDXs (one per required OS version).
 #
@@ -245,6 +245,7 @@ function Invoke-WindowsBaseForVersion {
                 -var "service_cidr=$($script:ServiceCidr)" `
                 -var "flannel_version=$($script:FlannelVersion)" `
                 -var "wins_cni_version=$($script:WinsCniVersion)" `
+                -var "cni_plugins_version=$($script:CniPluginsVersion)" `
                 -var "containerd_version=$ctrdVersion" `
                 .
 

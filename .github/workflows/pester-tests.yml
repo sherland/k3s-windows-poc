@@ -17,18 +17,18 @@ jobs:
   pester:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Pester and powershell-yaml
         shell: pwsh
         run: |
-          Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Install-Module -Name Pester -MinimumVersion 6.0.0 -MaximumVersion 6.999 -Force -SkipPublisherCheck -Scope CurrentUser
           Install-Module -Name powershell-yaml -Force -Scope CurrentUser
 
       - name: Run Pester test suite
         shell: pwsh
         run: |
-          Import-Module Pester -MinimumVersion 5.5.0 -Force
+          Import-Module Pester -MinimumVersion 6.0.0 -MaximumVersion 6.999 -Force
           $cfg = New-PesterConfiguration
           $cfg.Run.Path = 'tests'
           $cfg.Run.Exit = $true
@@ -40,7 +40,7 @@ jobs:
 
       - name: Publish test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pester-results
           path: test-results.xml

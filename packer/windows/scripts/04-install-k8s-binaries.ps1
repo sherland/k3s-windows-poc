@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/04-install-k8s-binaries.ps1
 # Install upstream Kubernetes binaries into the Windows base image:
 #   - kubelet.exe, kube-proxy.exe, kubectl.exe
@@ -18,12 +18,13 @@
 # Those are done at first boot by C:\k8s-firstboot.ps1 (see 05-firstboot-setup.ps1).
 #
 # Environment variables injected by Packer:
-#   K8S_VERSION       - e.g. v1.35.8
+#   K8S_VERSION       - e.g. v1.36.5
 #   CLUSTER_DNS_IP    - CoreDNS cluster IP   (default: 10.43.0.10)
 #   CLUSTER_CIDR      - Pod CIDR             (default: 10.42.0.0/16)
 #   SERVICE_CIDR      - Service CIDR         (default: 10.43.0.0/16)
-#   FLANNEL_VERSION   - flannel release tag  (default: v0.28.9)
+#   FLANNEL_VERSION   - flannel release tag  (default: v0.28.10)
 #   WINS_CNI_VERSION  - windows-container-networking release (default: v0.3.3)
+#   CNI_PLUGINS_VERSION - containernetworking/plugins release, host-local IPAM (default: v1.9.1)
 # =============================================================================
 
 Set-StrictMode -Version Latest
@@ -35,8 +36,9 @@ $K8sVersion    = $env:K8S_VERSION;   if (-not $K8sVersion)  { throw 'K8S_VERSION
 $ClusterDnsIp  = if ($env:CLUSTER_DNS_IP)   { $env:CLUSTER_DNS_IP }   else { '10.43.0.10' }
 $ClusterCidr   = if ($env:CLUSTER_CIDR)     { $env:CLUSTER_CIDR }     else { '10.42.0.0/16' }
 $ServiceCidr   = if ($env:SERVICE_CIDR)     { $env:SERVICE_CIDR }     else { '10.43.0.0/16' }
-$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.9' }
+$FlannelVersion = if ($env:FLANNEL_VERSION)  { $env:FLANNEL_VERSION }  else { 'v0.28.10' }
 $WinCniVersion  = if ($env:WINS_CNI_VERSION) { $env:WINS_CNI_VERSION } else { 'v0.3.3' }
+$CniPluginsVersion = if ($env:CNI_PLUGINS_VERSION) { $env:CNI_PLUGINS_VERSION } else { 'v1.9.1' }
 
 $KDir          = 'C:\k'
 $CniBinDir     = 'C:\k\cni'
@@ -134,8 +136,8 @@ if (-not (Test-Path $HnsPsmPath)) {
 # host-local IPAM from containernetworking/plugins
 if (-not (Test-Path $HostLocalPath)) {
     $tgz = "$env:TEMP\cni-plugins.tgz"
-    $url = 'https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-windows-amd64-v1.9.1.tgz'
-    Write-Log "04-install-k8s-binaries: Downloading host-local IPAM plugin"
+    $url = "https://github.com/containernetworking/plugins/releases/download/$CniPluginsVersion/cni-plugins-windows-amd64-$CniPluginsVersion.tgz"
+    Write-Log "04-install-k8s-binaries: Downloading host-local IPAM plugin (CNI plugins $CniPluginsVersion)"
     curl.exe -fsSL -L -o $tgz $url
     if ($LASTEXITCODE -ne 0) { throw "Download failed: cni-plugins from $url" }
     tar.exe -xzf $tgz -C $CniBinDir 2>&1 | Out-Null
@@ -157,7 +159,7 @@ clusterDomain: "cluster.local"
 resolvConf: ""
 containerRuntimeEndpoint: "npipe:////./pipe/containerd-containerd"
 registerNode: true
-podInfraContainerImage: "mcr.microsoft.com/oss/kubernetes/pause:3.9"
+podInfraContainerImage: "registry.k8s.io/pause:3.10.2"
 "@ | Set-Content -Path "$KDir\kubelet-config.yaml" -Encoding ascii
 Write-Log "04-install-k8s-binaries: kubelet-config.yaml written"
 
@@ -337,26 +339,21 @@ foreach ($r in $fwRules) {
 }
 
 # ---------------------------------------------------------------------------
-# Update containerd config.toml with CNI bin/conf directories
+# Assert containerd config.toml already has the CNI bin/conf directories.
+# 03-containerd.ps1 runs earlier in this same build and always writes the v3
+# [plugins.'io.containerd.cri.v1.runtime'.cni] table with these paths - there
+# is no supported path where this step runs without that one having already
+# happened, so fail loudly here instead of silently patching a config that
+# should never be missing this table.
 # ---------------------------------------------------------------------------
 $containerdConf = 'C:\containerd\config\config.toml'
-if (Test-Path $containerdConf) {
-    $cfg = Get-Content $containerdConf -Raw
-    $cniSection = '[plugins."io.containerd.grpc.v1.cri".cni]'
-    if ($cfg -notmatch [regex]::Escape($cniSection)) {
-        $CniBinEsc  = $CniBinDir  -replace '\\', '\\\\'
-        $CniConfEsc = $CniConfDir -replace '\\', '\\\\'
-        $cfg += "`n$cniSection`n  bin_dir  = `"$CniBinEsc`"`n  conf_dir = `"$CniConfEsc`"`n"
-        Set-Content -Path $containerdConf -Value $cfg -Encoding ascii
-        Write-Log "04-install-k8s-binaries: Added [cni] section to containerd config.toml"
-        Restart-Service containerd -Force
-        Start-Sleep -Seconds 5
-        Write-Log "04-install-k8s-binaries: containerd restarted"
-    } else {
-        Write-Log "04-install-k8s-binaries: containerd config.toml already has [cni] section"
-    }
-} else {
-    Write-Log "04-install-k8s-binaries: WARNING - $containerdConf not found"
+if (-not (Test-Path $containerdConf)) {
+    throw "04-install-k8s-binaries: $containerdConf not found - 03-containerd.ps1 should have created it"
+}
+$cfg = Get-Content $containerdConf -Raw
+$cniSection = "[plugins.'io.containerd.cri.v1.runtime'.cni]"
+if ($cfg -notmatch [regex]::Escape($cniSection)) {
+    throw "04-install-k8s-binaries: $containerdConf is missing $cniSection - 03-containerd.ps1's generated config should always have it"
 }
 
 # ---------------------------------------------------------------------------

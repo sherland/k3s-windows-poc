@@ -9,7 +9,7 @@ packer {
   required_version = ">= 1.10.0"
   required_plugins {
     hyperv = {
-      version = ">= 1.1.3"
+      version = ">= 1.1.5"
       source  = "github.com/hashicorp/hyperv"
     }
   }
@@ -55,11 +55,11 @@ variable "output_dir" {
   type    = string
   default = "../../vhdx/windows-base"
 }
-# Kubernetes version string (no +k3sN suffix), e.g. v1.35.8
+# Kubernetes version string (no +k3sN suffix), e.g. v1.36.5
 # Used to download upstream kubelet.exe and kube-proxy.exe from dl.k8s.io
 variable "k8s_version" {
   type    = string
-  default = "v1.35.8"
+  default = "v1.36.5"
 }
 variable "cluster_dns_ip" {
   type    = string
@@ -75,15 +75,19 @@ variable "service_cidr" {
 }
 variable "flannel_version" {
   type    = string
-  default = "v0.28.9"
+  default = "v0.28.10"
 }
 variable "wins_cni_version" {
   type    = string
   default = "v0.3.3"
 }
+variable "cni_plugins_version" {
+  type    = string
+  default = "v1.9.1"
+}
 variable "containerd_version" {
   type    = string
-  default = "1.7.35"
+  default = "2.3.7"
 }
 
 # ---------------------------------------------------------------------------
@@ -147,7 +151,7 @@ build {
     restart_check_command = "powershell -command \"Get-WindowsFeature Containers | Where-Object {$_.InstallState -eq 'Installed'}\""
   }
 
-  # --- 3: Install containerd (pinned to v1.x for CRI v1 gRPC API compatibility) ---
+  # --- 3: Install containerd (pinned to the 2.3 LTS line; 1.7 reached EOL 2026-09-30) ---
   provisioner "powershell" {
     script = "scripts/03-containerd.ps1"
     environment_vars = [
@@ -166,7 +170,8 @@ build {
       "CLUSTER_CIDR=${var.cluster_cidr}",
       "SERVICE_CIDR=${var.service_cidr}",
       "FLANNEL_VERSION=${var.flannel_version}",
-      "WINS_CNI_VERSION=${var.wins_cni_version}"
+      "WINS_CNI_VERSION=${var.wins_cni_version}",
+      "CNI_PLUGINS_VERSION=${var.cni_plugins_version}"
     ]
   }
 

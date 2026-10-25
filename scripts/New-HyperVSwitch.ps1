@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/New-HyperVSwitch.ps1
 # Phase 1 — Create (or verify) an external Hyper-V vSwitch.
 # Idempotent: if the switch already exists and is bound to a physical NIC,

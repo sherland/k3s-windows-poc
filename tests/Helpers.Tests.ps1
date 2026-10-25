@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # tests/Helpers.Tests.ps1
 # Unit tests for the pure/file-based logic in scripts/Helpers.ps1 — topology
 # name generation, sentinel bookkeeping, path helpers. No VM/network required.
