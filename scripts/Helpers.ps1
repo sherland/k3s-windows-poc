@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Helpers.ps1
 # Shared utility functions used by all other scripts.
 # Dot-source this file at the top of every script: . "$PSScriptRoot\Helpers.ps1"
@@ -471,7 +471,16 @@ function New-DifferencingNode {
             -MemoryStartupBytes ($MemoryMB * 1MB) -SwitchName $SwitchName -NoVHD
 
         Set-VMProcessor -VMName $VMName -Count $CPU
-        Set-VM         -VMName $VMName -DynamicMemory:$false -CheckpointType Disabled
+        # Set-VM -DynamicMemory:$false is a documented parameter but a no-op on at
+        # least some Hyper-V builds (confirmed: DynamicMemoryEnabled stays $true
+        # afterward) - Set-VMMemory -DynamicMemoryEnabled is the one that actually
+        # takes effect. Fixed memory matters here: under host memory pressure,
+        # Hyper-V's Dynamic Memory balloon driver can reclaim guest RAM down to a
+        # point where the guest kernel's own OOM killer starts firing on real
+        # workloads (observed: systemd-networkd and k3s-agent killed with SIGKILL),
+        # which no amount of in-guest retry logic can route around.
+        Set-VMMemory    -VMName $VMName -DynamicMemoryEnabled $false
+        Set-VM          -VMName $VMName -CheckpointType Disabled
 
         if ($Generation -eq 2) {
             Add-VMHardDiskDrive -VMName $VMName -Path $ChildVhdxPath -ControllerType SCSI
