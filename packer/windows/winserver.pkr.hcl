@@ -87,7 +87,7 @@ variable "cni_plugins_version" {
 }
 variable "containerd_version" {
   type    = string
-  default = "1.7.35"
+  default = "2.3.7"
 }
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ build {
     restart_check_command = "powershell -command \"Get-WindowsFeature Containers | Where-Object {$_.InstallState -eq 'Installed'}\""
   }
 
-  # --- 3: Install containerd (pinned to v1.x for CRI v1 gRPC API compatibility) ---
+  # --- 3: Install containerd (pinned to the 2.3 LTS line; 1.7 reached EOL 2026-09-30) ---
   provisioner "powershell" {
     script = "scripts/03-containerd.ps1"
     environment_vars = [

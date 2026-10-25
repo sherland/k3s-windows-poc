@@ -61,15 +61,16 @@ $script:ClusterDnsIp = '10.43.0.10'   # CoreDNS ClusterIP (k3s default: 10th IP 
 # -----------------------------------------------------------------------------
 # Software Versions
 # k3s is pinned — both Linux and Windows binaries must use the same version.
-# containerd is pinned to v1.x — kubelet v1.35 requires CRI v1 gRPC API (removed in v2.x).
+# containerd (Windows) is pinned to the 2.3 LTS line (supported to 2028-04-30; 1.7
+# reached End of Life 2026-09-30). CRI v1 is the only CRI gRPC API in 2.x: what
+# actually changes vs. 1.7 is the config.toml schema (v3: [plugins."io.containerd.
+# cri.v1.runtime"/"io.containerd.cri.v1.images"], sandbox_image -> pinned_images.sandbox,
+# bin_dir -> bin_dirs). 2.2+/2.3+ is required by Kubernetes 1.36 kubelet.
 # Compatible range: Cilium 1.20 supports k8s 1.33–1.36; Calico 3.33 supports k8s 1.35–1.37.
 # Intersection: k8s 1.35–1.36. k3s v1.35.8+k3s1 (Kubernetes 1.35) is the latest compatible.
-# NOTE: k3s v1.36.x is NOT usable here — Kubernetes 1.36 kubelet removes the containerd 1.x
-# cgroup-driver fallback and requires containerd 2.0+, which conflicts with the Windows
-# containerd pin below (2.x breaks the CRI v1 API kubelet expects on Windows workers).
 # -----------------------------------------------------------------------------
 $script:K3sVersion        = 'v1.35.8+k3s1'
-$script:ContainerdVersion = '1.7.35'
+$script:ContainerdVersion = '2.3.7'
 $script:FlannelVersion    = 'v0.28.10'   # Windows flanneld.exe + CNI plugin
 $script:WinsCniVersion    = 'v0.3.3'    # windows-container-networking (win-bridge, win-overlay)
 $script:MultusVersion     = 'v4.3.1'    # multus-cni meta-plugin (Linux only)

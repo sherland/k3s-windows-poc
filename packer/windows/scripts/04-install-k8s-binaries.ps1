@@ -159,7 +159,7 @@ clusterDomain: "cluster.local"
 resolvConf: ""
 containerRuntimeEndpoint: "npipe:////./pipe/containerd-containerd"
 registerNode: true
-podInfraContainerImage: "mcr.microsoft.com/oss/kubernetes/pause:3.9"
+podInfraContainerImage: "registry.k8s.io/pause:3.10.2"
 "@ | Set-Content -Path "$KDir\kubelet-config.yaml" -Encoding ascii
 Write-Log "04-install-k8s-binaries: kubelet-config.yaml written"
 
@@ -340,15 +340,18 @@ foreach ($r in $fwRules) {
 
 # ---------------------------------------------------------------------------
 # Update containerd config.toml with CNI bin/conf directories
+# (03-containerd.ps1 already writes the v3 [plugins.'io.containerd.cri.v1.
+# runtime'.cni] table with these paths; this only covers a config.toml that
+# predates that table, e.g. a base image carried over from before containerd 2.x.)
 # ---------------------------------------------------------------------------
 $containerdConf = 'C:\containerd\config\config.toml'
 if (Test-Path $containerdConf) {
     $cfg = Get-Content $containerdConf -Raw
-    $cniSection = '[plugins."io.containerd.grpc.v1.cri".cni]'
+    $cniSection = "[plugins.'io.containerd.cri.v1.runtime'.cni]"
     if ($cfg -notmatch [regex]::Escape($cniSection)) {
         $CniBinEsc  = $CniBinDir  -replace '\\', '\\\\'
         $CniConfEsc = $CniConfDir -replace '\\', '\\\\'
-        $cfg += "`n$cniSection`n  bin_dir  = `"$CniBinEsc`"`n  conf_dir = `"$CniConfEsc`"`n"
+        $cfg += "`n$cniSection`n  bin_dirs = ['$CniBinEsc']`n  conf_dir = '$CniConfEsc'`n"
         Set-Content -Path $containerdConf -Value $cfg -Encoding ascii
         Write-Log "04-install-k8s-binaries: Added [cni] section to containerd config.toml"
         Restart-Service containerd -Force

@@ -1,8 +1,8 @@
 # =============================================================================
 # tests/ConfigVariables.Tests.ps1
 # Sanity checks on config/variables.ps1 — version string shapes and the hard
-# compatibility invariants documented there (e.g. containerd must stay on the
-# 1.x line for Windows kubelet CRI v1 compatibility). Catches typos/shape
+# compatibility invariants documented there (e.g. containerd must be >= 2.2
+# for the Windows kubelet). Catches typos/shape
 # mistakes and silent regressions of documented constraints, not "is this the
 # latest version" (that's a human/AI judgement call, not a test).
 #
@@ -53,17 +53,8 @@ Describe 'Version string shapes' {
 }
 
 Describe 'Hard compatibility invariants' {
-    It 'ContainerdVersion stays on the 1.x line (Windows kubelet needs the CRI v1 gRPC API removed in containerd v2)' {
-        ([version]$script:ContainerdVersion).Major | Should -Be 1
-    }
-
-    It "K3sVersion's Kubernetes minor is not 1.36+ (kubelet 1.36 requires containerd 2.0+, conflicting with the 1.x pin above)" {
-        if ($script:K3sVersion -match '^v(\d+)\.(\d+)\.') {
-            $minor = [int]$Matches[2]
-            $minor | Should -BeLessThan 36 -Because 'k3s v1.36 kubelet drops the containerd 1.x cgroup-driver fallback'
-        } else {
-            throw "Could not parse K3sVersion '$script:K3sVersion'"
-        }
+    It 'ContainerdVersion is >= 2.2 (k8s 1.36 requires containerd 2.2+/2.3+ per containerd RELEASES.md)' {
+        ([version]$script:ContainerdVersion) | Should -BeGreaterOrEqual ([version]'2.2.0')
     }
 }
 

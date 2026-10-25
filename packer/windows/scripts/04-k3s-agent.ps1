@@ -436,7 +436,7 @@ $kubeletBin = "`"$KubeletPath`" " +
     "--config=`"$KDir\kubelet-config.yaml`" " +
     "--root-dir=C:\var\lib\kubelet " +
     "--cert-dir=`"$PkiDir`" " +
-    "--pod-infra-container-image=mcr.microsoft.com/oss/kubernetes/pause:3.9 " +
+    "--pod-infra-container-image=registry.k8s.io/pause:3.10.2 " +
     "--register-with-taints=os=windows:NoSchedule " +
     "--node-labels=kubernetes.io/os=windows " +
     "--cloud-provider=`"`""
