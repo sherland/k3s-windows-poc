@@ -88,7 +88,7 @@ $script:CNIPlugin            = 'flannel'
 ```
 Windows 11 Host (Hyper-V)
 ├── Golden base VHDXs (read-only, built once by Packer)
-│   ├── vhdx/linux-base/           — Ubuntu 24.04 + k3s binary
+│   ├── vhdx/linux-base/           — Ubuntu 26.04 + k3s binary
 │   ├── vhdx/win2022-base/         — WS2022 + containerd + kubelet binary
 │   └── vhdx/win2025-base/         — WS2025 + containerd + kubelet binary
 │

@@ -1,6 +1,8 @@
 # =============================================================================
 # packer/linux/ubuntu.pkr.hcl
-# Builds the Ubuntu 24.04 LTS k3s server VM using the Hyper-V ISO builder.
+# Builds the Ubuntu LTS k3s server VM using the Hyper-V ISO builder.
+# OS release is driven by config/variables.ps1's $script:UbuntuReleasesBaseUrl
+# (currently 26.04) via the iso_url/iso_checksum variables below.
 # =============================================================================
 
 packer {
@@ -81,7 +83,8 @@ source "hyperv-iso" "ubuntu" {
   # Packer serves user-data from this directory via its built-in HTTP server
   http_directory   = "http"
 
-  # Boot command for Ubuntu 24.04 autoinstall on Hyper-V Gen2 UEFI.
+  # Boot command for Ubuntu autoinstall on Hyper-V Gen2 UEFI (casper boot path
+  # confirmed unchanged on Ubuntu 26.04's live-server ISO).
   # Drop into GRUB command shell ('c') and boot manually — more reliable than
   # navigating the menu with arrow keys which can miss the right kernel line.
   boot_wait        = "15s"

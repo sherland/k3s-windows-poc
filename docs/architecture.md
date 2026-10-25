@@ -28,7 +28,7 @@ enabling fast node provisioning and reproducible rebuilds.
 Windows 11 Host (Hyper-V)
 │
 ├── Golden base VHDXs (read-only after Packer build)
-│   ├── vhdx/linux-base/                — Ubuntu 24.04 LTS + k3s binary
+│   ├── vhdx/linux-base/                — Ubuntu 26.04 LTS + k3s binary
 │   ├── vhdx/win2022-base/              — WS2022 + containerd v2.3.7 + kubelet
 │   └── vhdx/win2025-base/              — WS2025 + containerd v2.3.7 + kubelet
 │
@@ -80,13 +80,13 @@ and credentials in one place.
 
 ### 2.2 Linux base image (`packer/linux/ubuntu.pkr.hcl`)
 
-**Goal:** Ubuntu 24.04 LTS with the k3s binary pre-installed and cloud-init pre-cleaned so
+**Goal:** Ubuntu 26.04 LTS with the k3s binary pre-installed and cloud-init pre-cleaned so
 every cloned VM treats its first boot as a fresh instance.
 
 #### Boot sequence
 
 ```
-1. Packer mounts Ubuntu 24.04 ISO in a Hyper-V Generation 2 VM
+1. Packer mounts Ubuntu 26.04 ISO in a Hyper-V Generation 2 VM
 2. Boot command navigates GRUB → adds kernel args pointing to the autoinstall URL:
        autoinstall ds=nocloud-net;s=http://{{ .HTTPIP }}:{{ .HTTPPort }}/
 3. Packer's built-in HTTP server serves packer/linux/http/user-data (cloud-init autoinstall)
@@ -323,7 +323,7 @@ This avoids the complexity of setting up WinRM over the network for new nodes.
 
 ## 6. Scenario Comparison — A, B, C, D, E, F
 
-All scenarios use k3s v1.36.5+k3s1 on Ubuntu 24.04 LTS as the control plane and Linux
+All scenarios use k3s v1.36.5+k3s1 on Ubuntu 26.04 LTS as the control plane and Linux
 workers. They differ in CNI plugin, Windows node support, and networking capabilities.
 
 ---
@@ -492,7 +492,7 @@ confirm that flows for the `kube-verify` namespace are captured.
 - **Service mesh capabilities without a sidecar** (see §7)
 
 **Disadvantages:**
-- Requires Linux kernel ≥ 4.19 (eBPF co-routine support); Ubuntu 24.04 ships 6.8 ✓
+- Requires Linux kernel ≥ 4.19 (eBPF co-routine support); Ubuntu 26.04.1 ships 7.0.0 ✓
 - No Windows worker support — Cilium's eBPF datapath is Linux-only
 - More complex to debug than Flannel (eBPF programs, Cilium-specific CLI `cilium`)
 - Helm + Cilium operator pod overhead (small, but non-zero)

@@ -203,7 +203,7 @@ Scale-down sequence per node: `kubectl cordon` → `kubectl drain` → `kubectl 
 |-------|--------|-------------|-----------------|
 | 0 | `Install-Prerequisites.ps1` | Hyper-V, Packer, kubectl, OpenSSH, Windows ADK | < 5 min |
 | 1 | `New-HyperVSwitch.ps1` | Create external vSwitch | < 1 min |
-| BASE-L | `Build-LinuxBase.ps1` | Packer builds Ubuntu 24.04 + k3s binary | 7–10 min |
+| BASE-L | `Build-LinuxBase.ps1` | Packer builds Ubuntu 26.04 + k3s binary | 7–14 min |
 | BASE-W | `Build-WindowsBase.ps1` | Packer builds WS2022 + containerd + kubelet | 15–25 min |
 | 4 | `New-LinuxNodes.ps1` | Differencing disks + cloud-init seed ISOs | < 1 min |
 | 5 | `New-WindowsNodes.ps1` | Differencing disks for Windows nodes | < 1 min |
@@ -260,7 +260,7 @@ All phases are **idempotent** — sentinel files in `output/sentinels/` skip alr
 │   ├── seed-isos/             # Per-node cloud-init ISOs
 │   └── sentinels/             # Phase completion markers
 ├── packer/
-│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 24.04 + k3s binary base image
+│   ├── linux/ubuntu.pkr.hcl   # Ubuntu 26.04 + k3s binary base image
 │   └── windows/winserver.pkr.hcl  # WS2022/WS2025 + containerd + kubelet base image
 ├── scripts/
 │   ├── Main.ps1               # 10-phase orchestrator

@@ -86,7 +86,7 @@ $script:KubectlWingetId   = 'Kubernetes.kubectl'
 # -----------------------------------------------------------------------------
 # Ubuntu ISO (auto-resolved from releases.ubuntu.com when left empty)
 # -----------------------------------------------------------------------------
-$script:UbuntuReleasesBaseUrl = 'https://releases.ubuntu.com/24.04'
+$script:UbuntuReleasesBaseUrl = 'https://releases.ubuntu.com/26.04'
 $script:UbuntuISOUrl          = ''   # override to pin a specific ISO URL
 $script:UbuntuISOChecksum     = ''   # override to pin a specific SHA256
 

@@ -1,6 +1,7 @@
 # =============================================================================
 # scripts/Build-LinuxBase.ps1
-# Phase 2 — Build the Ubuntu 24.04 golden base VHDX with Packer.
+# Phase 2 — Build the Ubuntu golden base VHDX with Packer.
+# OS release comes from config/variables.ps1's $script:UbuntuReleasesBaseUrl (currently 26.04).
 #
 # The base image contains: OS packages, kernel tweaks, k3s binary, containerd.
 # It does NOT configure k3s as server or agent (that happens later).
@@ -34,17 +35,22 @@ function Get-UbuntuISO {
         return @{ Url = $script:UbuntuISOUrl; Checksum = "sha256:$($script:UbuntuISOChecksum)" }
     }
 
-    Write-Step "Resolving Ubuntu 24.04 ISO URL dynamically..."
+    if ($script:UbuntuReleasesBaseUrl -notmatch '(\d+\.\d+)\/?$') {
+        throw "Could not parse an Ubuntu release version (e.g. '24.04') from the end of `$script:UbuntuReleasesBaseUrl = '$($script:UbuntuReleasesBaseUrl)'"
+    }
+    $releaseVer = $Matches[1]
+    Write-Step "Resolving Ubuntu $releaseVer ISO URL dynamically..."
     $hashPage = Invoke-WithRetry -MaxAttempts 6 -DelaySeconds 15 -Description 'Fetch Ubuntu SHA256SUMS' -Action {
         Invoke-RestMethod -Uri "$($script:UbuntuReleasesBaseUrl)/SHA256SUMS" `
                           -UseBasicParsing -TimeoutSec 30
     }
+    $isoPattern = "ubuntu-$([regex]::Escape($releaseVer))(\.\d+)?-live-server-amd64\.iso"
     $isoLine = $hashPage -split "`n" |
-               Where-Object { $_.Trim() -match 'ubuntu-24\.\d+\.\d+-live-server-amd64\.iso' } |
+               Where-Object { $_.Trim() -match $isoPattern } |
                Select-Object -Last 1
 
     if (-not $isoLine) {
-        throw "Could not parse Ubuntu 24.04 SHA256SUMS from $($script:UbuntuReleasesBaseUrl)/SHA256SUMS"
+        throw "Could not parse Ubuntu $releaseVer SHA256SUMS from $($script:UbuntuReleasesBaseUrl)/SHA256SUMS"
     }
     $parts    = $isoLine.Trim() -split '\s+'
     $hash     = $parts[0]
@@ -133,7 +139,7 @@ function Test-LinuxBaseDone {
 
 # ---------------------------------------------------------------------------
 function Invoke-LinuxBase {
-    Write-PhaseHeader 'BASE-L' 'Build Linux golden base image (Ubuntu 24.04 + k3s binary)'
+    Write-PhaseHeader 'BASE-L' 'Build Linux golden base image (Ubuntu 26.04 + k3s binary)'
 
     Assert-DiskSpace -Path $script:RepoRoot -MinimumGB 25
     Initialize-OutputDir $script:OutputDir

@@ -161,14 +161,27 @@ containerd pitfall), README.md, docs/architecture.md, Pester version references.
 
 ---
 
-## 5. Stretch — Ubuntu 26.04 LTS (only after C1–C4 pass E2E)
-26.04.1 is available. Changes that can bite: subiquity autoinstall schema, `sudo-rs` as default sudo
-(we rely on `sudo -S` and `sudo -S env {{.Vars}}`), Rust coreutils, cgroup v2-only. Approach:
-generalise the ISO regex in `Build-LinuxBase.ps1` (`ubuntu-<ver>(\.\d+)?-live-server-amd64\.iso`,
-version derived from `UbuntuReleasesBaseUrl`), switch the base URL, rebuild Linux base only, run
-Scenarios A + C (fastest coverage of Flannel + Windows interplay and eBPF). **Timebox**: if it
-fails for anything that is not a one-line fix, revert to 24.04 and record findings here as a
-deferred item. Separate commit so it can be dropped independently.
+## 5. Stretch - Ubuntu 26.04 LTS (only after C1-C4 pass E2E) - DONE, 2026-10-24
+26.04.1 is available. Changes that could bite: subiquity autoinstall schema, `sudo-rs` as default
+sudo (we rely on `sudo -S` and `sudo -S env {{.Vars}}`), Rust coreutils, cgroup v2-only. Approach
+taken: generalised the ISO-matching regex in `Build-LinuxBase.ps1` to derive both the expected
+filename pattern and the error messages from `$script:UbuntuReleasesBaseUrl` instead of hardcoding
+`24\.`, switched the base URL to `https://releases.ubuntu.com/26.04`, deleted only the Linux golden
+image (kept the Windows ones), and rebuilt.
+
+**Outcome: none of the flagged risks materialized.** The Linux base built cleanly in 13m24s against
+`ubuntu-26.04.1-live-server-amd64.iso`: `sudo -S` / `sudo -S env {{.Vars}}` worked unchanged (no
+`sudo-rs` incompatibility hit), the autoinstall schema (`version: 1`) was accepted as-is, and
+`01-base.sh` / `02-install-k3s-binary.sh` / `03-cloud-init-clean.sh` all ran without modification.
+Scenario A (flannel + Windows node): **33/33 PASS** (13.4 min total, including one recurrence of
+the already-documented kubelet-first-boot flake on the *Windows* side, unrelated to the Linux
+switch). Scenario C (Cilium/eBPF: the real stress test for 26.04's kernel, confirmed
+`7.0.0-38-generic` via `kubectl get nodes -o wide`, i.e. cgroup v2-only): **33/33 PASS** (5.9 min).
+Ran with no timebox, by explicit user instruction, so the revert-to-24.04 clause below was never
+needed; recorded here for context on what the original plan allowed for, not what happened.
+
+~~**Timebox**: if it fails for anything that is not a one-line fix, revert to 24.04 and record
+findings here as a deferred item.~~ Not invoked; everything passed on the first attempt.
 
 ---
 
@@ -287,5 +300,6 @@ itself is what needed validating and it passed.
   A's 33/33 PASS validates the dependency bump on WS2022 content under the `win2025-base` label.
   Revisit once Microsoft fixes the fwlink or a WS2025 ISO is sourced out-of-band.
 - Hardening the kubelet Windows service with failure-recovery actions so `Automatic` startup
-  survives a crash without a reboot — observed as a one-off flake in §7a, not reproduced twice, and
-  outside this round's scope.
+  survives a crash without a reboot, observed in §7a and recurred once more during the Ubuntu
+  26.04 stretch (§5, Scenario A), both times self-resolved with a manual `Start-Service kubelet`
+  and no rebuild needed. Still outside this round's scope, but no longer a one-off.
