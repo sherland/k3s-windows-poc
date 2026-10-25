@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Run-ScenarioC.ps1
 # Test Case C: 1 control-plane + 2 Linux workers, NO Windows nodes
 #              CNI: Cilium (replaces k3s embedded flannel entirely)
@@ -61,7 +61,7 @@ $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario C"
 
-Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($configPath, $cfg.TrimEnd(), [System.Text.UTF8Encoding]::new($true))
 Write-Host "[OK] config/variables.ps1 → CNI=cilium, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=@()" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # packer/windows/scripts/05-firstboot-setup.ps1
 # Bake the per-node first-boot self-configuration mechanism into the base image.
 #
@@ -137,6 +137,15 @@ $null = New-Service -Name $kubeletSvc `
     -StartupType Automatic `
     -Description 'Kubernetes node agent — registers this Windows node with the k3s control plane'
 FbLog 'k8s-firstboot: kubelet service registered'
+
+# New-Service registers no failure-recovery action, so a crash while Running (e.g. the
+# Restart-Computer below interrupting the just-started process) leaves the service
+# Stopped forever - "Automatic" startup only triggers at boot, never on an in-session
+# crash. This run is fully unattended: there is no human or AI available to notice and
+# restart it, so SCM itself must auto-restart it. reset=86400: forget past failures
+# after a day of continuous Running so a transient blip long ago doesn't exhaust retries.
+sc.exe failure $kubeletSvc reset= 86400 actions= restart/5000/restart/5000/restart/60000 | Out-Null
+FbLog 'k8s-firstboot: kubelet service recovery actions configured (auto-restart on crash)'
 
 Start-Service $kubeletSvc
 FbLog 'k8s-firstboot: kubelet service started'

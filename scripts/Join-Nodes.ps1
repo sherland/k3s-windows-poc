@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # scripts/Join-Nodes.ps1
 # Phase 7 — Join all worker nodes to the cluster.
 #
@@ -281,6 +281,16 @@ function Join-WindowsWorker {
             }
             $state = Invoke-Command -Session $sess -ScriptBlock {
                 [string](Get-Service kubelet -ErrorAction SilentlyContinue).Status
+            }
+            if ($state -eq 'Stopped') {
+                # 05-firstboot-setup.ps1 configures SCM auto-restart on crash, but this
+                # run is unattended end-to-end - nothing is watching for a Stopped
+                # service to nudge it by hand, so self-heal here too rather than just
+                # wait out the timeout: a Stopped service never spontaneously starts.
+                Invoke-Command -Session $sess -ScriptBlock {
+                    Start-Service kubelet -ErrorAction SilentlyContinue
+                }
+                return $false
             }
             return ($state -eq 'Running')
         }

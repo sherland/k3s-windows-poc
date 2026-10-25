@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # Run-ScenarioB.ps1
 # Test Case B: 1 control-plane + 2 Linux workers, NO Windows nodes
 #              CNI: multus (meta-plugin on top of k3s flannel)
@@ -58,7 +58,7 @@ $cfg = $cfg -replace `
     '(?s)\$script:WindowsNodeSpecs\s*=\s*@\([^)]*\)[^\r\n]*', `
     "`$script:WindowsNodeSpecs    = @()  # No Windows nodes for Scenario B"
 
-Set-Content $configPath $cfg.TrimEnd() -Encoding UTF8 -NoNewline
+[System.IO.File]::WriteAllText($configPath, $cfg.TrimEnd(), [System.Text.UTF8Encoding]::new($true))
 Write-Host "[OK] config/variables.ps1 → CNI=multus, LinuxWorkerCount=$workerCount, WindowsNodeSpecs=@()" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
